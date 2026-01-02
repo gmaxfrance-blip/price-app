@@ -4,129 +4,162 @@ import pandas as pd
 from datetime import date
 
 # --- 1. CLOUD CONNECTION ---
-# Connects to your permanent Supabase vault
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. PINK MINIMAL UI ---
-st.set_page_config(page_title="Gmax Prix Distributors", layout="wide")
-st.markdown("""
+# --- 2. UI BRANDING & DYNAMIC COLOR (#ff1774) ---
+LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a423573672203bc38f5fbcf5f5a56ac18380ebb3/dp%20logo.png"
+
+st.set_page_config(
+    page_title="Gmax Prix Distributors", 
+    page_icon=LOGO_URL, 
+    layout="wide"
+)
+
+# Custom CSS for the specific #ff1774 Pink Theme
+st.markdown(f"""
     <style>
-    .stButton>button { background-color: #f1774c; color: white; border-radius: 6px; width: 100%; border: none; }
-    .stTabs [aria-selected="true"] { background-color: #f1774c !important; color: white !important; }
-    h1, h2, h3 { color: #f1774c; }
-    .stSelectbox label, .stNumberInput label { color: #f1774c; font-weight: bold; }
+    /* Headers and Metrics */
+    h1, h2, h3, .stMetric label {{ color: #ff1774 !important; font-weight: bold; }}
+    
+    /* Buttons */
+    div.stButton > button {{
+        background-color: #ff1774 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        border: none !important;
+        font-weight: bold;
+    }}
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {{ gap: 8px; }}
+    .stTabs [aria-selected="true"] {{
+        background-color: #ff1774 !important;
+        color: white !important;
+    }}
+    
+    /* Sidebar and Input Labels */
+    .stSelectbox label, .stNumberInput label, .stDateInput label {{ 
+        color: #ff1774; 
+        font-weight: 600; 
+    }}
     </style>
     """, unsafe_allow_html=True)
 
 # --- 3. ACCESS CONTROL ---
 if "role" not in st.session_state:
-    st.title("🔐 Gmax Prix Login")
-    pwd = st.text_input("Password", type="password", placeholder="Enter Password...")
-    if st.button("Login"):
+    st.image(LOGO_URL, width=150)
+    st.title("Gmax Prix Login")
+    pwd = st.text_input("Security Key", type="password", placeholder="Enter Password...")
+    if st.button("Sign In"):
         if pwd == "admin123":
             st.session_state.role = "admin"
             st.rerun()
         elif pwd == "boss456":
             st.session_state.role = "viewer"
             st.rerun()
-        else: st.error("Wrong Password")
+        else: 
+            st.error("Invalid Security Key")
     st.stop()
 
-st.title("💗 Gmax Prix Distributors")
+# --- 4. BRANDED HEADER ---
+col_logo, col_title = st.columns([1, 6])
+with col_logo:
+    st.image(LOGO_URL, width=90)
+with col_title:
+    st.title("Gmax Prix Distributors")
+    st.caption(f"Logged in as: {st.session_state.role.upper()}")
 
-# --- 4. TABS NAVIGATION ---
-tabs = ["📥 Entry", "🔍 Analyser"]
-if st.session_state.role == "admin": tabs += ["📝 Register", "✏️ Manage"]
-t1, t2, t3, t4 = st.tabs(tabs + ([""] * (4-len(tabs))))
+# --- 5. DYNAMIC TAB LOGIC ---
+# If viewer (Boss), show only Analyser. If admin, show all.
+if st.session_state.role == "viewer":
+    tabs_list = ["🔍 Analyser"]
+else:
+    tabs_list = ["📥 Entry", "🔍 Analyser", "📝 Register", "✏️ Manage"]
 
-# FETCH MASTER DATA (Updates automatically on rerun)
+active_tabs = st.tabs(tabs_list)
+
+# DATA FETCHING (MASTER LISTS)
 prods = conn.table("products").select("name").execute()
 dists = conn.table("distributors").select("name").execute()
 p_names = [r['name'] for r in prods.data]
 d_names = [r['name'] for r in dists.data]
 
-# TAB 1: DATA ENTRY
-with t1:
-    with st.form("entry", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        p = c1.selectbox("Product", ["Choose Product..."] + p_names)
-        d = c1.selectbox("Distributor", ["Choose Distributor..."] + d_names)
-        pr = c2.number_input("Price ($)", min_value=0.0, step=0.01)
-        dt = c2.date_input("Date", date.today())
-        if st.form_submit_button("Submit Entry"):
-            if p != "Choose Product..." and d != "Choose Distributor...":
-                conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
-                st.success("Saved to Cloud!")
-            else: st.error("Please select a Product and Distributor")
-    
-    st.write("### Recent Pricing Activity")
-    hist = conn.table("price_logs").select("*").order("date", desc=True).limit(10).execute()
-    st.dataframe(pd.DataFrame(hist.data), use_container_width=True, hide_index=True)
+# --- TAB CONTENT ---
 
-# TAB 2: ANALYSER
-with t2:
-    search_p = st.selectbox("Search Item History", ["Choose Product..."] + p_names)
+# ENTRY (ADMIN ONLY)
+if st.session_state.role == "admin":
+    with active_tabs[0]:
+        with st.form("entry_form", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            p = c1.selectbox("Product", ["Choose Product..."] + p_names)
+            d = c1.selectbox("Distributor", ["Choose Distributor..."] + d_names)
+            pr = c2.number_input("Price ($)", min_value=0.0, step=0.01)
+            dt = c2.date_input("Transaction Date", date.today())
+            if st.form_submit_button("Save Price Log"):
+                if p != "Choose Product..." and d != "Choose Distributor...":
+                    conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
+                    st.success("Entry synchronized to cloud!")
+                else: 
+                    st.error("Please select both Product and Distributor.")
+
+# ANALYSER (AVAILABLE TO ALL)
+# Adjust index based on role
+analyser_idx = 0 if st.session_state.role == "viewer" else 1
+with active_tabs[analyser_idx]:
+    search_p = st.selectbox("Search Market Data", ["Choose Product..."] + p_names)
     if search_p != "Choose Product...":
         data = conn.table("price_logs").select("*").eq("product", search_p).execute()
         df = pd.DataFrame(data.data)
         if not df.empty:
+            # Highlight Best Price
             min_p = df['price'].min()
-            best_options = df[df['price'] == min_p]
-            st.write("### 🏆 Best Found Price(s)")
-            cols = st.columns(len(best_options))
-            for i, row in enumerate(best_options.itertuples()):
-                cols[i].metric(row.distributor, f"${row.price}", f"Date: {row.date}")
+            best = df[df['price'] == min_p]
+            st.write("### 🏆 Market Leader(s)")
+            cols = st.columns(len(best))
+            for i, row in enumerate(best.itertuples()):
+                cols[i].metric(row.distributor, f"${row.price}", f"Update: {row.date}")
+            
+            st.write("### Detailed Price History")
             st.dataframe(df.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+        else: 
+            st.info("No pricing records found for this item.")
 
-# TAB 3: REGISTER (ADMIN ONLY)
+# REGISTER (ADMIN ONLY)
 if st.session_state.role == "admin":
-    with t3:
-        col_reg1, col_reg2 = st.columns(2)
-        
-        # --- PRODUCT SECTION ---
-        with col_reg1:
-            st.subheader("Register Products")
+    with active_tabs[2]:
+        reg1, reg2 = st.columns(2)
+        with reg1:
             with st.form("reg_p", clear_on_submit=True):
                 np = st.text_input("New Product Name")
-                if st.form_submit_button("Add Product") and np:
+                if st.form_submit_button("Register Product") and np:
                     conn.table("products").insert({"name": np}).execute()
-                    st.success(f"Registered {np}")
-                    st.rerun() # Forces the table below to refresh immediately
-            
-            # AUTOMATIC TABLE LISTING
-            st.write("**Registered Products List:**")
-            if p_names:
-                st.dataframe(pd.DataFrame(p_names, columns=["Product Name"]), use_container_width=True, hide_index=True)
-            else:
-                st.info("No products registered yet.")
-
-        # --- DISTRIBUTOR SECTION ---
-        with col_reg2:
-            st.subheader("Register Distributors")
+                    st.rerun()
+            st.write("**Registered Products:**")
+            st.dataframe(pd.DataFrame(p_names, columns=["Name"]), use_container_width=True)
+        with reg2:
             with st.form("reg_d", clear_on_submit=True):
                 nd = st.text_input("New Distributor Name")
-                if st.form_submit_button("Add Distributor") and nd:
+                if st.form_submit_button("Register Distributor") and nd:
                     conn.table("distributors").insert({"name": nd}).execute()
-                    st.success(f"Registered {nd}")
-                    st.rerun() # Forces the table below to refresh immediately
-            
-            # AUTOMATIC TABLE LISTING
-            st.write("**Registered Distributors List:**")
-            if d_names:
-                st.dataframe(pd.DataFrame(d_names, columns=["Distributor Name"]), use_container_width=True, hide_index=True)
-            else:
-                st.info("No distributors registered yet.")
+                    st.rerun()
+            st.write("**Registered Distributors:**")
+            st.dataframe(pd.DataFrame(d_names, columns=["Name"]), use_container_width=True)
 
-# TAB 4: MANAGE (ADMIN ONLY)
+# MANAGE (ADMIN ONLY)
 if st.session_state.role == "admin":
-    with t4:
-        st.subheader("Delete Pricing Logs")
+    with active_tabs[3]:
         all_logs = conn.table("price_logs").select("*").execute()
         df_all = pd.DataFrame(all_logs.data)
         if not df_all.empty:
+            st.write("### Database Maintenance")
             del_id = st.selectbox("Select ID to Delete", df_all['id'].tolist())
-            if st.button("Delete Entry Permanently", type="primary"):
+            if st.button("Confirm Permanent Deletion", type="primary"):
                 conn.table("price_logs").delete().eq("id", del_id).execute()
-                st.success("Deleted!")
                 st.rerun()
             st.dataframe(df_all, use_container_width=True)
+
+# Sidebar Logout
+st.sidebar.markdown("---")
+if st.sidebar.button("Logout"):
+    st.session_state.clear()
+    st.rerun()
