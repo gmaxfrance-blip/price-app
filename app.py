@@ -6,29 +6,16 @@ from datetime import date
 # --- 1. CLOUD CONNECTION ---
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. UI BRANDING & DYNAMIC COLOR (#ff1774) ---
+# --- 2. UI BRANDING & COLOR (#ff1774) ---
 LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a423573672203bc38f5fbcf5f5a56ac18380ebb3/dp%20logo.png"
 
-st.set_page_config(
-    page_title="Gmax Prix Distributors", 
-    page_icon=LOGO_URL, 
-    layout="wide"
-)
+st.set_page_config(page_title="Gmax Prix Distributors", page_icon=LOGO_URL, layout="wide")
 
-# Custom CSS for Gmax Pink (#ff1774)
 st.markdown(f"""
     <style>
     h1, h2, h3, .stMetric label {{ color: #ff1774 !important; font-weight: bold; }}
-    div.stButton > button {{
-        background-color: #ff1774 !important;
-        color: white !important;
-        border-radius: 8px !important;
-        border: none !important;
-    }}
-    .stTabs [aria-selected="true"] {{
-        background-color: #ff1774 !important;
-        color: white !important;
-    }}
+    div.stButton > button {{ background-color: #ff1774 !important; color: white !important; border-radius: 8px !important; border: none !important; }}
+    .stTabs [aria-selected="true"] {{ background-color: #ff1774 !important; color: white !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -56,7 +43,7 @@ else:
 
 active_tabs = st.tabs(tabs_list)
 
-# FETCH DATA HELPERS
+# FETCH MASTER DATA
 prods = conn.table("products").select("name").execute()
 dists = conn.table("distributors").select("name").execute()
 p_names = sorted([r['name'] for r in prods.data])
@@ -77,15 +64,15 @@ if st.session_state.role == "admin":
                     st.success("Synchronized!")
                     st.rerun()
 
-        st.write("### Recent Logs (Paginated)")
+        st.write("### Recent Logs")
         logs_raw = conn.table("price_logs").select("*").order("date", desc=True).execute()
         if logs_raw.data:
             df_logs = pd.DataFrame(logs_raw.data)
-            # Format Date to DMY
-            df_logs['date'] = pd.to_datetime(df_logs['date']).dt.strftime('%d/%m/%Y')
-            df_logs = df_logs.rename(columns={"price": "Price HT (€)"})
-            # Automatic pagination via Streamlit dataframe
-            st.dataframe(df_logs[['date', 'product', 'distributor', 'Price HT (€)']], use_container_width=True, hide_index=True)
+            # Display format only for this table
+            df_display = df_logs.copy()
+            df_display['date'] = pd.to_datetime(df_display['date']).dt.strftime('%d/%m/%Y')
+            df_display = df_display.rename(columns={"price": "Price HT (€)"})
+            st.dataframe(df_display[['date', 'product', 'distributor', 'Price HT (€)']], use_container_width=True, hide_index=True)
 
 # --- TAB 2: ANALYSER ---
 analyser_idx = 0 if st.session_state.role == "viewer" else 1
@@ -93,31 +80,35 @@ with active_tabs[analyser_idx]:
     search_p = st.selectbox("Search Market Data", ["Choose Product..."] + p_names)
     if search_p != "Choose Product...":
         data = conn.table("price_logs").select("*").eq("product", search_p).execute()
-        df = pd.DataFrame(data.data)
-        if not df.empty:
-            df['date'] = pd.to_datetime(df['date']).dt.strftime('%d/%m/%Y')
-            min_p = df['price'].min()
+        df_an = pd.DataFrame(data.data)
+        if not df_an.empty:
+            min_p = df_an['price'].min()
             st.metric("Lowest Market Price", f"{min_p:.2f} €")
-            st.dataframe(df[['date', 'distributor', 'price']].rename(columns={"price": "Price HT (€)"}), use_container_width=True, hide_index=True)
+            df_an['date'] = pd.to_datetime(df_an['date']).dt.strftime('%d/%m/%Y')
+            st.dataframe(df_an[['date', 'distributor', 'price']].rename(columns={"price": "Price HT (€)"}), use_container_width=True, hide_index=True)
 
-# --- TAB 4: MANAGE (ADMIN ONLY - EDIT/DELETE IN ROWS) ---
+# --- TAB 4: MANAGE (ADMIN ONLY) ---
 if st.session_state.role == "admin":
     with active_tabs[3]:
-        st.subheader("Edit or Delete Row Data")
+        st.subheader("Manage Price Logs")
         st.caption("Instructions: Double-click a cell to edit. Select a row and press 'Delete' on your keyboard to remove.")
         
-        # Data Editor implementation
         raw_m = conn.table("price_logs").select("*").order("date", desc=True).execute()
         df_m = pd.DataFrame(raw_m.data)
         
         if not df_m.empty:
+            # FIX: Convert 'date' column to datetime objects so data_editor can handle it
+            df_m['date'] = pd.to_datetime(df_m['date']).dt.date
+            
             edited_df = st.data_editor(
                 df_m,
                 num_rows="dynamic",
                 disabled=["id"],
                 column_config={
                     "price": st.column_config.NumberColumn("Price HT (€)", format="%.2f €"),
-                    "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY")
+                    "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+                    "product": st.column_config.SelectboxColumn("Product", options=p_names),
+                    "distributor": st.column_config.SelectboxColumn("Distributor", options=d_names)
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -126,17 +117,17 @@ if st.session_state.role == "admin":
 
             if st.button("Save Changes to Cloud"):
                 state = st.session_state["manage_editor"]
-                
-                # Handle Deletes
+                # 1. Handle Deletes
                 for idx in state["deleted_rows"]:
                     row_id = df_m.iloc[idx]["id"]
                     conn.table("price_logs").delete().eq("id", row_id).execute()
-                
-                # Handle Edits
+                # 2. Handle Edits
                 for idx, updates in state["edited_rows"].items():
                     row_id = df_m.iloc[idx]["id"]
+                    # Convert date back to string if it was edited
+                    if "date" in updates:
+                        updates["date"] = str(updates["date"])
                     conn.table("price_logs").update(updates).eq("id", row_id).execute()
-                
                 st.success("Database Updated!")
                 st.rerun()
 
