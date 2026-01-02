@@ -1,124 +1,102 @@
 import streamlit as st
-import sqlite3
+from st_supabase_connection import SupabaseConnection
 import pandas as pd
 from datetime import date
 
-# --- 1. DATABASE ENGINE ---
-def init_db():
-    conn = sqlite3.connect('price_tracker.db')
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS products (name TEXT UNIQUE)')
-    c.execute('CREATE TABLE IF NOT EXISTS distributors (name TEXT UNIQUE)')
-    c.execute('''CREATE TABLE IF NOT EXISTS price_logs 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, product TEXT, distributor TEXT, price REAL, date DATE)''')
-    conn.commit()
-    conn.close()
+# --- 1. CLOUD CONNECTION ---
+conn = st.connection("supabase", type=SupabaseConnection)
 
-def run_query(query, params=(), is_select=True):
-    conn = sqlite3.connect('price_tracker.db')
-    if is_select:
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
-        return df
-    else:
-        curr = conn.cursor()
-        curr.execute(query, params)
-        conn.commit()
-        conn.close()
-
-init_db()
-
-# --- 2. MINIMAL UI DESIGN ---
-st.set_page_config(page_title="Price Intel Pro", layout="wide")
+# --- 2. PINK MINIMAL UI ---
+st.set_page_config(page_title="Gmax Prix Distributors", layout="wide")
 st.markdown("""
     <style>
-    .main { background-color: #f9f9f9; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { background-color: #f1f1f1; border-radius: 4px; padding: 8px 16px; }
-    .stTabs [aria-selected="true"] { background-color: #000000 !important; color: white !important; }
+    .stButton>button { background-color: #f1774c; color: white; border-radius: 6px; width: 100%; border: none; }
+    .stTabs [aria-selected="true"] { background-color: #f1774c !important; color: white !important; }
+    h1, h2, h3 { color: #f1774c; }
+    .stSelectbox label, .stNumberInput label { color: #f1774c; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("📊 Price Intel")
-st.caption("Minimalist Distributor Tracking System")
+# --- 3. ACCESS CONTROL ---
+if "role" not in st.session_state:
+    st.title("🔐 Gmax Prix Login")
+    pwd = st.text_input("Password", type="password", placeholder="Enter Password...")
+    if st.button("Login"):
+        if pwd == "admin123":
+            st.session_state.role = "admin"
+            st.rerun()
+        elif pwd == "boss456":
+            st.session_state.role = "viewer"
+            st.rerun()
+        else: st.error("Wrong Password")
+    st.stop()
 
-t1, t2, t3, t4, t5 = st.tabs(["📥 Entry", "📝 Register", "🔍 Analyser", "✏️ Manage", "📂 Export"])
+st.title("💗 Gmax Prix Distributors")
+st.sidebar.write(f"Logged in as: **{st.session_state.role.upper()}**")
+if st.sidebar.button("Logout"):
+    del st.session_state.role
+    st.rerun()
 
-# --- TAB 1: DATA ENTRY ---
+# --- 4. TABS NAVIGATION ---
+tabs = ["📥 Entry", "🔍 Analyser"]
+if st.session_state.role == "admin": tabs += ["📝 Register", "✏️ Manage"]
+t1, t2, t3, t4 = st.tabs(tabs + ([""] * (4-len(tabs))))
+
+# FETCH MASTER DATA
+prods = conn.table("products").select("name").execute()
+dists = conn.table("distributors").select("name").execute()
+p_names = [r['name'] for r in prods.data]
+d_names = [r['name'] for r in dists.data]
+
+# TAB 1: DATA ENTRY
 with t1:
-    prods = run_query("SELECT name FROM products")
-    dists = run_query("SELECT name FROM distributors")
-    if prods.empty or dists.empty:
-        st.info("Please register items first.")
-    else:
-        with st.form("entry", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            p = col1.selectbox("Product", prods['name'])
-            d = col1.selectbox("Distributor", dists['name'])
-            pr = col2.number_input("Price", min_value=0.0, format="%.2f")
-            dt = col2.date_input("Date", date.today())
-            if st.form_submit_button("Submit Price"):
-                run_query("INSERT INTO price_logs (product, distributor, price, date) VALUES (?,?,?,?)", (p, d, pr, dt), False)
-                st.success("Logged!")
+    with st.form("entry", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        p = c1.selectbox("Product", ["Choose Product..."] + p_names)
+        d = c1.selectbox("Distributor", ["Choose Distributor..."] + d_names)
+        pr = c2.number_input("Price ($)", min_value=0.0, step=0.01)
+        dt = c2.date_input("Date", date.today())
+        if st.form_submit_button("Submit Entry"):
+            if p != "Choose Product..." and d != "Choose Distributor...":
+                conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
+                st.success("Saved to Cloud!")
+            else: st.error("Please select a Product and Distributor")
+    st.write("### Last 10 Entries")
+    hist = conn.table("price_logs").select("*").order("date", desc=True).limit(10).execute()
+    st.dataframe(pd.DataFrame(hist.data), use_container_width=True, hide_index=True)
 
-# --- TAB 2: REGISTER (With Tables) ---
+# TAB 2: ANALYSER
 with t2:
-    st.subheader("Master Lists")
-    c1, c2 = st.columns(2)
-    with c1:
+    search_p = st.selectbox("Search Item", ["Choose Product..."] + p_names)
+    if search_p != "Choose Product...":
+        data = conn.table("price_logs").select("*").eq("product", search_p).execute()
+        df = pd.DataFrame(data.data)
+        if not df.empty:
+            min_p = df['price'].min()
+            best_options = df[df['price'] == min_p]
+            st.write("### 🏆 Best Found Price(s)")
+            cols = st.columns(len(best_options))
+            for i, row in enumerate(best_options.itertuples()):
+                cols[i].metric(row.distributor, f"${row.price}", f"Date: {row.date}")
+            st.write("### Full History")
+            st.dataframe(df.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+
+# TAB 3 & 4: ADMIN ONLY
+if st.session_state.role == "admin":
+    with t3:
         with st.form("reg_p", clear_on_submit=True):
-            np = st.text_input("New Product")
+            np = st.text_input("New Product Name")
             if st.form_submit_button("Add Product") and np:
-                try: run_query("INSERT INTO products VALUES (?)", (np,), False)
-                except: st.error("Exists")
-        st.write("**Registered Products:**")
-        st.dataframe(run_query("SELECT name as 'Product Name' FROM products"), use_container_width=True, hide_index=True)
-
-    with c2:
-        with st.form("reg_d", clear_on_submit=True):
-            nd = st.text_input("New Distributor")
-            if st.form_submit_button("Add Distributor") and nd:
-                try: run_query("INSERT INTO distributors VALUES (?)", (nd,), False)
-                except: st.error("Exists")
-        st.write("**Registered Distributors:**")
-        st.dataframe(run_query("SELECT name as 'Distributor Name' FROM distributors"), use_container_width=True, hide_index=True)
-
-# --- TAB 3: ANALYSER ---
-with t3:
-    all_p = run_query("SELECT name FROM products")['name'].tolist()
-    if all_p:
-        target = st.selectbox("Compare:", all_p)
-        history = run_query("SELECT distributor, price, date FROM price_logs WHERE product=? ORDER BY price ASC", (target,))
-        if not history.empty:
-            st.metric("Best Price", f"${history.iloc[0]['price']}", history.iloc[0]['distributor'])
-            st.line_chart(history, x='date', y='price')
-
-# --- TAB 4: EDIT & MANAGE ---
-with t4:
-    st.subheader("Edit or Delete Logs")
-    logs = run_query("SELECT * FROM price_logs ORDER BY date DESC")
-    if not logs.empty:
-        log_id = st.selectbox("Select ID to Edit/Delete", logs['id'].tolist())
-        current = logs[logs['id'] == log_id].iloc[0]
-        
-        with st.expander(f"Edit Entry #{log_id}"):
-            new_pr = st.number_input("Change Price", value=float(current['price']))
-            new_dt = st.date_input("Change Date", pd.to_datetime(current['date']))
-            col_eb1, col_eb2 = st.columns(2)
-            if col_eb1.button("💾 Save Changes"):
-                run_query("UPDATE price_logs SET price=?, date=? WHERE id=?", (new_pr, new_dt, log_id), False)
-                st.success("Updated!")
+                conn.table("products").insert({"name": np}).execute()
                 st.rerun()
-            if col_eb2.button("🗑️ Delete Entry", type="primary"):
-                run_query("DELETE FROM price_logs WHERE id=?", (log_id,), False)
-                st.rerun()
-        st.dataframe(logs, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(p_names, columns=["Registered Products"]), use_container_width=True)
 
-# --- TAB 5: EXPORT ---
-with t5:
-    st.subheader("Daily Backup")
-    all_data = run_query("SELECT * FROM price_logs")
-    if not all_data.empty:
-        st.dataframe(all_data, use_container_width=True, hide_index=True)
-        csv = all_data.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Excel (CSV)", csv, f"backup_{date.today()}.csv", "text/csv")
+    with t4:
+        all_logs = conn.table("price_logs").select("*").execute()
+        df_all = pd.DataFrame(all_logs.data)
+        if not df_all.empty:
+            del_id = st.selectbox("Select ID to Delete", df_all['id'].tolist())
+            if st.button("Delete Entry Permanently", type="primary"):
+                conn.table("price_logs").delete().eq("id", del_id).execute()
+                st.rerun()
+            st.dataframe(df_all, use_container_width=True)
