@@ -15,62 +15,40 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for the specific #ff1774 Pink Theme
+# Custom CSS for Gmax Pink (#ff1774)
 st.markdown(f"""
     <style>
-    /* Headers and Metrics */
     h1, h2, h3, .stMetric label {{ color: #ff1774 !important; font-weight: bold; }}
-    
-    /* Buttons */
     div.stButton > button {{
         background-color: #ff1774 !important;
         color: white !important;
         border-radius: 8px !important;
         border: none !important;
-        font-weight: bold;
     }}
-    
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {{ gap: 8px; }}
     .stTabs [aria-selected="true"] {{
         background-color: #ff1774 !important;
         color: white !important;
-    }}
-    
-    /* Sidebar and Input Labels */
-    .stSelectbox label, .stNumberInput label, .stDateInput label {{ 
-        color: #ff1774; 
-        font-weight: 600; 
     }}
     </style>
     """, unsafe_allow_html=True)
 
 # --- 3. ACCESS CONTROL ---
 if "role" not in st.session_state:
-    st.image(LOGO_URL, width=150)
+    st.image(LOGO_URL, width=120)
     st.title("Gmax Prix Login")
-    pwd = st.text_input("Security Key", type="password", placeholder="Enter Password...")
+    pwd = st.text_input("Security Key", type="password")
     if st.button("Sign In"):
-        if pwd == "admin123":
-            st.session_state.role = "admin"
-            st.rerun()
-        elif pwd == "boss456":
-            st.session_state.role = "viewer"
-            st.rerun()
-        else: 
-            st.error("Invalid Security Key")
+        if pwd == "admin123": st.session_state.role = "admin"
+        elif pwd == "boss456": st.session_state.role = "viewer"
+        else: st.error("Access Denied")
+        if "role" in st.session_state: st.rerun()
     st.stop()
 
-# --- 4. BRANDED HEADER ---
-col_logo, col_title = st.columns([1, 6])
-with col_logo:
-    st.image(LOGO_URL, width=90)
-with col_title:
-    st.title("Gmax Prix Distributors")
-    st.caption(f"Logged in as: {st.session_state.role.upper()}")
+# --- 4. HEADER ---
+st.image(LOGO_URL, width=80)
+st.title("Gmax Prix Distributors")
 
-# --- 5. DYNAMIC TAB LOGIC ---
-# If viewer (Boss), show only Analyser. If admin, show all.
+# --- 5. TABS LOGIC ---
 if st.session_state.role == "viewer":
     tabs_list = ["🔍 Analyser"]
 else:
@@ -78,32 +56,38 @@ else:
 
 active_tabs = st.tabs(tabs_list)
 
-# DATA FETCHING (MASTER LISTS)
+# FETCH DATA HELPERS
 prods = conn.table("products").select("name").execute()
 dists = conn.table("distributors").select("name").execute()
-p_names = [r['name'] for r in prods.data]
-d_names = [r['name'] for r in dists.data]
+p_names = sorted([r['name'] for r in prods.data])
+d_names = sorted([r['name'] for r in dists.data])
 
-# --- TAB CONTENT ---
-
-# ENTRY (ADMIN ONLY)
+# --- TAB 1: ENTRY (ADMIN ONLY) ---
 if st.session_state.role == "admin":
     with active_tabs[0]:
         with st.form("entry_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            p = c1.selectbox("Product", ["Choose Product..."] + p_names)
-            d = c1.selectbox("Distributor", ["Choose Distributor..."] + d_names)
-            pr = c2.number_input("Price ($)", min_value=0.0, step=0.01)
-            dt = c2.date_input("Transaction Date", date.today())
-            if st.form_submit_button("Save Price Log"):
-                if p != "Choose Product..." and d != "Choose Distributor...":
+            p = c1.selectbox("Product", ["Choose..."] + p_names)
+            d = c1.selectbox("Distributor", ["Choose..."] + d_names)
+            pr = c2.number_input("Price HT (€)", min_value=0.0, step=0.01, format="%.2f")
+            dt = c2.date_input("Date", date.today())
+            if st.form_submit_button("Add Price Entry"):
+                if p != "Choose..." and d != "Choose...":
                     conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
-                    st.success("Entry synchronized to cloud!")
-                else: 
-                    st.error("Please select both Product and Distributor.")
+                    st.success("Synchronized!")
+                    st.rerun()
 
-# ANALYSER (AVAILABLE TO ALL)
-# Adjust index based on role
+        st.write("### Recent Logs (Paginated)")
+        logs_raw = conn.table("price_logs").select("*").order("date", desc=True).execute()
+        if logs_raw.data:
+            df_logs = pd.DataFrame(logs_raw.data)
+            # Format Date to DMY
+            df_logs['date'] = pd.to_datetime(df_logs['date']).dt.strftime('%d/%m/%Y')
+            df_logs = df_logs.rename(columns={"price": "Price HT (€)"})
+            # Automatic pagination via Streamlit dataframe
+            st.dataframe(df_logs[['date', 'product', 'distributor', 'Price HT (€)']], use_container_width=True, hide_index=True)
+
+# --- TAB 2: ANALYSER ---
 analyser_idx = 0 if st.session_state.role == "viewer" else 1
 with active_tabs[analyser_idx]:
     search_p = st.selectbox("Search Market Data", ["Choose Product..."] + p_names)
@@ -111,55 +95,49 @@ with active_tabs[analyser_idx]:
         data = conn.table("price_logs").select("*").eq("product", search_p).execute()
         df = pd.DataFrame(data.data)
         if not df.empty:
-            # Highlight Best Price
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%d/%m/%Y')
             min_p = df['price'].min()
-            best = df[df['price'] == min_p]
-            st.write("### 🏆 Market Leader(s)")
-            cols = st.columns(len(best))
-            for i, row in enumerate(best.itertuples()):
-                cols[i].metric(row.distributor, f"${row.price}", f"Update: {row.date}")
-            
-            st.write("### Detailed Price History")
-            st.dataframe(df.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
-        else: 
-            st.info("No pricing records found for this item.")
+            st.metric("Lowest Market Price", f"{min_p:.2f} €")
+            st.dataframe(df[['date', 'distributor', 'price']].rename(columns={"price": "Price HT (€)"}), use_container_width=True, hide_index=True)
 
-# REGISTER (ADMIN ONLY)
-if st.session_state.role == "admin":
-    with active_tabs[2]:
-        reg1, reg2 = st.columns(2)
-        with reg1:
-            with st.form("reg_p", clear_on_submit=True):
-                np = st.text_input("New Product Name")
-                if st.form_submit_button("Register Product") and np:
-                    conn.table("products").insert({"name": np}).execute()
-                    st.rerun()
-            st.write("**Registered Products:**")
-            st.dataframe(pd.DataFrame(p_names, columns=["Name"]), use_container_width=True)
-        with reg2:
-            with st.form("reg_d", clear_on_submit=True):
-                nd = st.text_input("New Distributor Name")
-                if st.form_submit_button("Register Distributor") and nd:
-                    conn.table("distributors").insert({"name": nd}).execute()
-                    st.rerun()
-            st.write("**Registered Distributors:**")
-            st.dataframe(pd.DataFrame(d_names, columns=["Name"]), use_container_width=True)
-
-# MANAGE (ADMIN ONLY)
+# --- TAB 4: MANAGE (ADMIN ONLY - EDIT/DELETE IN ROWS) ---
 if st.session_state.role == "admin":
     with active_tabs[3]:
-        all_logs = conn.table("price_logs").select("*").execute()
-        df_all = pd.DataFrame(all_logs.data)
-        if not df_all.empty:
-            st.write("### Database Maintenance")
-            del_id = st.selectbox("Select ID to Delete", df_all['id'].tolist())
-            if st.button("Confirm Permanent Deletion", type="primary"):
-                conn.table("price_logs").delete().eq("id", del_id).execute()
-                st.rerun()
-            st.dataframe(df_all, use_container_width=True)
+        st.subheader("Edit or Delete Row Data")
+        st.caption("Instructions: Double-click a cell to edit. Select a row and press 'Delete' on your keyboard to remove.")
+        
+        # Data Editor implementation
+        raw_m = conn.table("price_logs").select("*").order("date", desc=True).execute()
+        df_m = pd.DataFrame(raw_m.data)
+        
+        if not df_m.empty:
+            edited_df = st.data_editor(
+                df_m,
+                num_rows="dynamic",
+                disabled=["id"],
+                column_config={
+                    "price": st.column_config.NumberColumn("Price HT (€)", format="%.2f €"),
+                    "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY")
+                },
+                use_container_width=True,
+                hide_index=True,
+                key="manage_editor"
+            )
 
-# Sidebar Logout
-st.sidebar.markdown("---")
-if st.sidebar.button("Logout"):
-    st.session_state.clear()
-    st.rerun()
+            if st.button("Save Changes to Cloud"):
+                state = st.session_state["manage_editor"]
+                
+                # Handle Deletes
+                for idx in state["deleted_rows"]:
+                    row_id = df_m.iloc[idx]["id"]
+                    conn.table("price_logs").delete().eq("id", row_id).execute()
+                
+                # Handle Edits
+                for idx, updates in state["edited_rows"].items():
+                    row_id = df_m.iloc[idx]["id"]
+                    conn.table("price_logs").update(updates).eq("id", row_id).execute()
+                
+                st.success("Database Updated!")
+                st.rerun()
+
+st.sidebar.button("Logout", on_click=lambda: st.session_state.clear())
