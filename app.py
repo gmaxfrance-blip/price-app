@@ -43,9 +43,6 @@ def fetch_master_lists():
 def fetch_price_logs():
     res = conn.table("price_logs").select("*").order("date", desc=True).execute()
     df = pd.DataFrame(res.data)
-    if not df.empty:
-        # Standardize dates for high-speed filtering
-        df['date'] = pd.to_datetime(df['date'])
     return df
 
 def clear_cache():
@@ -109,23 +106,26 @@ if st.session_state.role == "admin":
         
         # 1. Filters for Table
         if not df_main.empty:
+            # FORCE DATE CONVERSION FOR DISPLAY
+            df_display = df_main.copy()
+            df_display['date'] = pd.to_datetime(df_display['date'])
+
             fc1, fc2, fc3 = st.columns(3)
             f_prod = fc1.multiselect("Filter Product", p_list)
             f_dist = fc2.multiselect("Filter Distributor", d_list)
             f_date = fc3.date_input("Filter Date", [])
 
             # Apply Logic
-            df_view = df_main.copy()
-            if f_prod: df_view = df_view[df_view['product'].isin(f_prod)]
-            if f_dist: df_view = df_view[df_view['distributor'].isin(f_dist)]
+            if f_prod: df_display = df_display[df_display['product'].isin(f_prod)]
+            if f_dist: df_display = df_display[df_display['distributor'].isin(f_dist)]
             if isinstance(f_date, tuple) and len(f_date) == 2:
                 start_d, end_d = f_date
-                df_view = df_view[(df_view['date'].dt.date >= start_d) & (df_view['date'].dt.date <= end_d)]
+                df_display = df_display[(df_display['date'].dt.date >= start_d) & (df_display['date'].dt.date <= end_d)]
             elif isinstance(f_date, date): # Single date selected
-                 df_view = df_view[df_view['date'].dt.date == f_date]
+                 df_display = df_display[df_display['date'].dt.date == f_date]
 
             # 2. Pagination Logic
-            total_rows = len(df_view)
+            total_rows = len(df_display)
             total_pages = max(1, (total_rows // ITEMS_PER_PAGE) + (1 if total_rows % ITEMS_PER_PAGE > 0 else 0))
             
             col_pag1, col_pag2 = st.columns([1, 4])
@@ -135,16 +135,18 @@ if st.session_state.role == "admin":
             # Slice Data
             start_idx = (current_page - 1) * ITEMS_PER_PAGE
             end_idx = start_idx + ITEMS_PER_PAGE
-            df_page = df_view.iloc[start_idx:end_idx]
+            df_page = df_display.iloc[start_idx:end_idx].copy()
+            
+            # Convert to pure date object for cleaner display
+            df_page['date'] = df_page['date'].dt.date
 
-            # 3. Display Table with DD MM YYYY format
-            st.data_editor(
+            # 3. Display Table
+            st.dataframe(
                 df_page,
                 column_config={
                     "date": st.column_config.DateColumn("Date", format="DD MM YYYY"),
                     "price": st.column_config.NumberColumn("Price HT (€)", format="%.2f €")
                 },
-                disabled=True, # Read-only in Entry tab
                 use_container_width=True,
                 hide_index=True
             )
@@ -171,7 +173,7 @@ if st.session_state.role == "admin":
                         st.rerun()
             
             with st.expander("See Registered Products"):
-                st.table(pd.DataFrame(p_list, columns=["Name"]))
+                st.dataframe(pd.DataFrame(p_list, columns=["Name"]), use_container_width=True)
 
         # Distributor Registration
         with rc2:
@@ -189,7 +191,7 @@ if st.session_state.role == "admin":
                         st.rerun()
 
             with st.expander("See Registered Distributors"):
-                st.table(pd.DataFrame(d_list, columns=["Name"]))
+                st.dataframe(pd.DataFrame(d_list, columns=["Name"]), use_container_width=True)
 
 # --- TAB 3: MANAGE ---
 if st.session_state.role == "admin":
@@ -197,16 +199,17 @@ if st.session_state.role == "admin":
         st.subheader("✏️ Edit or Delete Entries")
         
         if not df_main.empty:
+            # FIX FOR DATE ERROR: Ensure column is definitely datetime objects
+            df_edit = df_main.copy()
+            df_edit['date'] = pd.to_datetime(df_edit['date']).dt.date
+            
             # Filters
             mc1, mc2, mc3 = st.columns(3)
             m_prod = mc1.multiselect("Filter Product", p_list, key="m_p")
             m_dist = mc2.multiselect("Filter Distributor", d_list, key="m_d")
-            m_date = mc3.date_input("Filter Date", [], key="m_dt")
             
-            df_edit = df_main.copy()
             if m_prod: df_edit = df_edit[df_edit['product'].isin(m_prod)]
             if m_dist: df_edit = df_edit[df_edit['distributor'].isin(m_dist)]
-            # Date filtering same as above... logic omitted for brevity but works same way
 
             st.info("💡 Edit cells directly. Product/Distributor changes are restricted to registered items.")
             
@@ -227,20 +230,18 @@ if st.session_state.role == "admin":
 
             if st.button("💾 Save All Changes"):
                 # 1. Deletes
-                for row in st.session_state["editor_manage"]["deleted_rows"]:
-                    # Get ID from the original dataframe index
-                    # Note: This requires careful index handling. 
-                    # For safety in filtering, we usually need the ID column present but hidden.
-                    # We'll use the row index from the displayed dataframe to find the ID.
-                    del_id = df_edit.iloc[row]["id"]
-                    conn.table("price_logs").delete().eq("id", del_id).execute()
+                if st.session_state["editor_manage"]["deleted_rows"]:
+                    for row in st.session_state["editor_manage"]["deleted_rows"]:
+                        del_id = df_edit.iloc[row]["id"]
+                        conn.table("price_logs").delete().eq("id", del_id).execute()
                 
                 # 2. Edits
-                for row_idx, updates in st.session_state["editor_manage"]["edited_rows"].items():
-                    edit_id = df_edit.iloc[row_idx]["id"]
-                    # Fix date serialization
-                    if "date" in updates: updates["date"] = str(updates["date"])
-                    conn.table("price_logs").update(updates).eq("id", edit_id).execute()
+                if st.session_state["editor_manage"]["edited_rows"]:
+                    for row_idx, updates in st.session_state["editor_manage"]["edited_rows"].items():
+                        edit_id = df_edit.iloc[row_idx]["id"]
+                        # Fix date serialization
+                        if "date" in updates: updates["date"] = str(updates["date"])
+                        conn.table("price_logs").update(updates).eq("id", edit_id).execute()
                 
                 clear_cache()
                 st.success("Database Updated Successfully!")
@@ -258,6 +259,8 @@ with tabs[analyser_tab_idx]:
         df_an = df_main[df_main['product'] == target_p].copy()
         
         if not df_an.empty:
+            df_an['date'] = pd.to_datetime(df_an['date'])
+            
             # 1. Best Prix Section
             min_price = df_an['price'].min()
             best_rows = df_an[df_an['price'] == min_price]
@@ -291,6 +294,8 @@ with tabs[analyser_tab_idx]:
 
             with c_g2:
                 st.markdown("### 📜 History")
+                # Format date for display
+                df_an['date'] = df_an['date'].dt.date
                 st.dataframe(
                     df_an[['date', 'distributor', 'price']].sort_values('date', ascending=False),
                     column_config={
