@@ -15,14 +15,29 @@ CARD_BG = "#262730"
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. CSS THEME ---
+# --- 2. CSS THEME (FULL DARK & CENTERED) ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
     .logo-container {{ display: flex; justify-content: center; margin-bottom: 20px; }}
-    div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 25px; border-radius: 8px; border: 1px solid #333; }}
+    
+    /* Input field visibility fix */
+    .stSelectbox div, .stNumberInput input, .stDateInput input {{
+        background-color: {CARD_BG} !important;
+        color: white !important;
+    }}
+    
+    div[data-testid="stForm"] {{ 
+        background-color: {CARD_BG}; 
+        padding: 25px; 
+        border-radius: 8px; 
+        border: 1px solid #333; 
+    }}
+    
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
-    div.stButton > button {{ background-color: {PINK}; color: white; border-radius: 4px; width: 100%; font-weight: bold; }}
+    div.stButton > button {{ background-color: {PINK}; color: white; border-radius: 4px; width: 100%; font-weight: bold; border: none; }}
+    
+    /* Hide Default Elements */
     #MainMenu, footer, header {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -71,18 +86,28 @@ if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
     with st.form("entry_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        p = c1.selectbox("Product (Mandatory)", [""] + p_list)
-        d = c2.selectbox("Distributor (Mandatory)", [""] + d_list)
+        p = c1.selectbox("Product", [""] + p_list)
+        d = c2.selectbox("Distributor", [""] + d_list)
         c3, c4 = st.columns(2)
-        pr = c3.number_input("Price (Mandatory)", min_value=0.01, step=0.01, format="%.2f")
-        dt = c4.date_input("Date (Mandatory)", date.today())
+        pr = c3.number_input("Price", min_value=0.0, step=0.01, format="%.2f")
+        dt = c4.date_input("Date", date.today())
+        
         if st.form_submit_button("Submit Entry"):
+            # Mandatory Logic (Without 'Mandatory' text in UI)
             if p == "" or d == "" or pr <= 0:
-                st.error("Error: All fields are mandatory.")
+                st.error("Error: All fields must be filled.")
             else:
                 conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
                 st.success("Successfully Entered")
                 st.cache_data.clear()
+    
+    # Show Entries below the form
+    st.write("### Recent Entries")
+    df_recent = get_logs()
+    if not df_recent.empty:
+        df_recent['date_display'] = df_recent['date'].dt.strftime('%d-%m-%Y')
+        st.dataframe(df_recent[['date_display', 'product', 'distributor', 'price']].head(10), 
+                     use_container_width=True, hide_index=True)
 
 # --- PAGE: REGISTER ---
 elif selected == "Register":
@@ -135,10 +160,11 @@ elif selected == "Analyser":
         if not df_sub.empty:
             st.metric("Lowest Price Found", f"{df_sub['price'].min():.2f} €")
             st.write("Price History & Distributor List:")
-            # Fix for KeyError: 'date' issue
+            
+            # FIXED: date column handled correctly for sorting and display
             df_sub['date_display'] = df_sub['date'].dt.strftime('%d-%m-%Y')
-            # Select columns first, THEN sort
-            history_df = df_sub[['date', 'date_display', 'distributor', 'price']].sort_values('date', ascending=False)
+            history_df = df_sub.sort_values('date', ascending=False)
+            
             st.dataframe(history_df[['date_display', 'distributor', 'price']], 
                          use_container_width=True, hide_index=True,
                          column_config={"date_display": "Date", "price": st.column_config.NumberColumn(format="%.2f €")})
@@ -160,8 +186,7 @@ elif selected == "Export":
         if not df_f.empty:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                # Format date as string for Excel compatibility
                 df_export = df_f[['date', 'product', 'distributor', 'price']].copy()
                 df_export['date'] = df_export['date'].dt.strftime('%d-%m-%Y')
                 df_export.to_excel(writer, index=False)
-            st.download_button("Click to Download", data=buffer.getvalue(), file_name=f"Gmax_Report_{start}_to_{end}.xlsx", use_container_width=True)
+            st.download_button("Click to Download", data=buffer.getvalue(), file_name=f"Gmax_Report.xlsx", use_container_width=True)
