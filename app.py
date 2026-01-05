@@ -11,7 +11,7 @@ LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a4235736
 PINK = "#ff1774"
 DARK_BG = "#0e1117"
 CARD_BG = "#262730"
-INPUT_BG = "#3b3d4a" # Slightly lighter for typing fields
+INPUT_BG = "#3b3d4a"
 
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
@@ -22,7 +22,6 @@ st.markdown(f"""
     .stApp {{ background-color: {DARK_BG}; }}
     .logo-container {{ display: flex; justify-content: center; margin-bottom: 20px; }}
     
-    /* Input field visibility fix */
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
         background-color: {INPUT_BG} !important;
         color: white !important;
@@ -38,7 +37,6 @@ st.markdown(f"""
     
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
     
-    /* Submit Entry Button Styling */
     div.stButton > button {{ 
         background-color: {PINK} !important; 
         color: white !important; 
@@ -49,7 +47,6 @@ st.markdown(f"""
         padding: 10px;
     }}
     
-    /* Hide Default Elements */
     #MainMenu, footer, header {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -91,6 +88,7 @@ with st.sidebar:
         st.rerun()
 
 p_list, d_list = get_master_data()
+tax_options = ["5.5%", "20%", "No tax"]
 st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}" width="120"></div>', unsafe_allow_html=True)
 
 # --- PAGE: ENTRY ---
@@ -100,15 +98,23 @@ if selected == "Entry":
         c1, c2 = st.columns(2)
         p = c1.selectbox("Product", [""] + p_list)
         d = c2.selectbox("Distributor", [""] + d_list)
-        c3, c4 = st.columns(2)
-        pr = c3.number_input("Price", min_value=0.0, step=0.01, format="%.2f")
-        dt = c4.date_input("Date", date.today())
+        
+        c3, c4, c5 = st.columns([2, 1, 2])
+        pr = c3.number_input("Price HT", min_value=0.0, step=0.01, format="%.2f")
+        tx = c4.selectbox("Tax %", tax_options)
+        dt = c5.date_input("Date", date.today())
         
         if st.form_submit_button("Submit Entry"):
             if p == "" or d == "" or pr <= 0:
-                st.error("Error: All fields must be filled.")
+                st.error("Error: Please fill all fields.")
             else:
-                conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
+                conn.table("price_logs").insert({
+                    "product": p, 
+                    "distributor": d, 
+                    "price": pr, 
+                    "tax_rate": tx,
+                    "date": str(dt)
+                }).execute()
                 st.success("Successfully Entered")
                 st.cache_data.clear()
     
@@ -116,7 +122,7 @@ if selected == "Entry":
     df_recent = get_logs()
     if not df_recent.empty:
         df_recent['date_display'] = df_recent['date'].dt.strftime('%d-%m-%Y')
-        st.dataframe(df_recent[['date_display', 'product', 'distributor', 'price']].head(10), 
+        st.dataframe(df_recent[['date_display', 'product', 'distributor', 'price', 'tax_rate']].head(10), 
                      use_container_width=True, hide_index=True)
 
 # --- PAGE: REGISTER ---
@@ -149,7 +155,11 @@ elif selected == "Manage":
     if not df.empty:
         df['date'] = df['date'].dt.date
         edited = st.data_editor(df, key="editor", num_rows="dynamic", use_container_width=True, hide_index=True,
-                               column_config={"id": None, "date": st.column_config.DateColumn(format="DD-MM-YYYY")})
+                               column_config={
+                                   "id": None, 
+                                   "date": st.column_config.DateColumn(format="DD-MM-YYYY"),
+                                   "tax_rate": st.column_config.SelectboxColumn("Tax %", options=tax_options, required=True)
+                               })
         if st.button("Commit Changes"):
             for row in st.session_state["editor"]["deleted_rows"]:
                 conn.table("price_logs").delete().eq("id", df.iloc[row]["id"]).execute()
@@ -168,14 +178,11 @@ elif selected == "Analyser":
         df = get_logs()
         df_sub = df[df['product'] == target].copy()
         if not df_sub.empty:
-            st.metric("Lowest Price Found", f"{df_sub['price'].min():.2f} €")
+            st.metric("Lowest Price Found (HT)", f"{df_sub['price'].min():.2f} €")
             st.write("Price History & Distributor List:")
-            
-            # FIXED: date column handled correctly for sorting and display
             df_sub['date_display'] = df_sub['date'].dt.strftime('%d-%m-%Y')
             history_df = df_sub.sort_values('date', ascending=False)
-            
-            st.dataframe(history_df[['date_display', 'distributor', 'price']], 
+            st.dataframe(history_df[['date_display', 'distributor', 'price', 'tax_rate']], 
                          use_container_width=True, hide_index=True,
                          column_config={"date_display": "Date", "price": st.column_config.NumberColumn(format="%.2f €")})
             
@@ -196,7 +203,7 @@ elif selected == "Export":
         if not df_f.empty:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df_export = df_f[['date', 'product', 'distributor', 'price']].copy()
+                df_export = df_f[['date', 'product', 'distributor', 'price', 'tax_rate']].copy()
                 df_export['date'] = df_export['date'].dt.strftime('%d-%m-%Y')
                 df_export.to_excel(writer, index=False)
-            st.download_button("Click to Download", data=buffer.getvalue(), file_name=f"Gmax_Report.xlsx", use_container_width=True)
+            st.download_button("Click to Download", data=buffer.getvalue(), file_name="Gmax_Report.xlsx", use_container_width=True)
