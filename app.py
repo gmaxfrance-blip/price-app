@@ -16,27 +16,23 @@ INPUT_BG = "#3b3d4a"
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. CSS THEME (DARK & PROFESSIONAL) ---
+# --- 2. CSS THEME ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
     .logo-container {{ display: flex; justify-content: center; margin-bottom: 20px; }}
-    
-    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
+    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input, .stMultiSelect div {{
         background-color: {INPUT_BG} !important;
         color: white !important;
         border: 1px solid #555 !important;
     }}
-    
     div[data-testid="stForm"] {{ 
         background-color: {CARD_BG}; 
         padding: 25px; 
         border-radius: 8px; 
         border: 1px solid #333; 
     }}
-    
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
-    
     div.stButton > button {{ 
         background-color: {PINK} !important; 
         color: white !important; 
@@ -46,7 +42,6 @@ st.markdown(f"""
         border: none; 
         padding: 10px;
     }}
-    
     #MainMenu, footer, header {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -69,7 +64,7 @@ def get_logs():
             df['tax_rate'] = "No tax"
     return df
 
-# --- 4. LOGIN SYSTEM ---
+# --- 4. LOGIN ---
 if "role" not in st.session_state:
     st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}" width="150"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -102,7 +97,6 @@ if selected == "Entry":
         c1, c2 = st.columns(2)
         p = c1.selectbox("Product", [""] + p_list)
         d = c2.selectbox("Distributor", [""] + d_list)
-        
         c3, c4, c5 = st.columns([2, 1, 2])
         pr = c3.number_input("Price HT", min_value=0.0, step=0.01, format="%.2f")
         tx = c4.selectbox("Tax %", tax_options)
@@ -120,8 +114,7 @@ if selected == "Entry":
     df_recent = get_logs()
     if not df_recent.empty:
         df_recent['date_display'] = df_recent['date'].dt.strftime('%d-%m-%Y')
-        st.dataframe(df_recent[['date_display', 'product', 'distributor', 'price', 'tax_rate']].rename(columns={'tax_rate': 'Tax %'}).head(10), 
-                     use_container_width=True, hide_index=True)
+        st.dataframe(df_recent[['date_display', 'product', 'distributor', 'price', 'tax_rate']].rename(columns={'tax_rate': 'Tax %'}).head(10), use_container_width=True, hide_index=True)
 
 # --- PAGE: REGISTER ---
 elif selected == "Register":
@@ -129,27 +122,31 @@ elif selected == "Register":
     c1, c2 = st.columns(2)
     with c1:
         st.write("#### Products")
-        # Searchable Dropdown for checking existence
-        st.selectbox("Search/View Registered Products", [""] + p_list, key="search_p")
-        new_p = st.text_input("Add New Product Name", key="np")
+        # Searchable check directly in the typing area
+        check_p = st.multiselect("Check if registered (type to search)", p_list, placeholder="Type to check...")
+        new_p = st.text_input("New Product Name", key="np")
         if st.button("Save Product"):
             if new_p and new_p not in p_list:
                 conn.table("products").insert({"name": new_p}).execute()
                 st.cache_data.clear()
                 st.rerun()
-            elif new_p in p_list: st.warning("Product already registered.")
+            elif new_p in p_list: st.warning("Already registered.")
+        st.write("Registered Products List:")
+        st.dataframe(pd.DataFrame(p_list, columns=["Name"]), use_container_width=True, hide_index=True, height=300)
             
     with c2:
         st.write("#### Distributors")
-        # Searchable Dropdown for checking existence
-        st.selectbox("Search/View Registered Distributors", [""] + d_list, key="search_d")
-        new_d = st.text_input("Add New Distributor Name", key="nd")
+        # Searchable check directly in the typing area
+        check_d = st.multiselect("Check if registered (type to search)", d_list, placeholder="Type to check...")
+        new_d = st.text_input("New Distributor Name", key="nd")
         if st.button("Save Distributor"):
             if new_d and new_d not in d_list:
                 conn.table("distributors").insert({"name": new_d}).execute()
                 st.cache_data.clear()
                 st.rerun()
-            elif new_d in d_list: st.warning("Distributor already registered.")
+            elif new_d in d_list: st.warning("Already registered.")
+        st.write("Registered Distributors List:")
+        st.dataframe(pd.DataFrame(d_list, columns=["Name"]), use_container_width=True, hide_index=True, height=300)
 
 # --- PAGE: MANAGE ---
 elif selected == "Manage":
@@ -159,6 +156,7 @@ elif selected == "Manage":
         df['date'] = df['date'].dt.date
         df_display = df.rename(columns={'tax_rate': 'Tax %'})
         
+        # DROPDOWNS LINKED TO REGISTERED LISTS
         edited = st.data_editor(df_display, key="editor", num_rows="dynamic", use_container_width=True, hide_index=True,
                                column_config={
                                    "id": None, 
