@@ -11,20 +11,22 @@ LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a4235736
 PINK = "#ff1774"
 DARK_BG = "#0e1117"
 CARD_BG = "#262730"
+INPUT_BG = "#3b3d4a" # Slightly lighter for typing fields
 
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. CSS THEME (FULL DARK & CENTERED) ---
+# --- 2. CSS THEME (FULL DARK & HIGH VISIBILITY) ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
     .logo-container {{ display: flex; justify-content: center; margin-bottom: 20px; }}
     
     /* Input field visibility fix */
-    .stSelectbox div, .stNumberInput input, .stDateInput input {{
-        background-color: {CARD_BG} !important;
+    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
+        background-color: {INPUT_BG} !important;
         color: white !important;
+        border: 1px solid #555 !important;
     }}
     
     div[data-testid="stForm"] {{ 
@@ -35,7 +37,17 @@ st.markdown(f"""
     }}
     
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
-    div.stButton > button {{ background-color: {PINK}; color: white; border-radius: 4px; width: 100%; font-weight: bold; border: none; }}
+    
+    /* Submit Entry Button Styling */
+    div.stButton > button {{ 
+        background-color: {PINK} !important; 
+        color: white !important; 
+        border-radius: 4px; 
+        width: 100%; 
+        font-weight: bold; 
+        border: none; 
+        padding: 10px;
+    }}
     
     /* Hide Default Elements */
     #MainMenu, footer, header {{visibility: hidden;}}
@@ -93,7 +105,6 @@ if selected == "Entry":
         dt = c4.date_input("Date", date.today())
         
         if st.form_submit_button("Submit Entry"):
-            # Mandatory Logic (Without 'Mandatory' text in UI)
             if p == "" or d == "" or pr <= 0:
                 st.error("Error: All fields must be filled.")
             else:
@@ -101,7 +112,6 @@ if selected == "Entry":
                 st.success("Successfully Entered")
                 st.cache_data.clear()
     
-    # Show Entries below the form
     st.write("### Recent Entries")
     df_recent = get_logs()
     if not df_recent.empty:
