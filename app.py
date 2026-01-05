@@ -54,11 +54,13 @@ st.markdown(f"""
 # --- 3. DATA FUNCTIONS ---
 @st.cache_data(ttl=600)
 def get_master_data():
+    """Loads Products & Distributors with caching for speed."""
     p = conn.table("products").select("name").execute()
     d = conn.table("distributors").select("name").execute()
     return sorted([r['name'] for r in p.data]), sorted([r['name'] for r in d.data])
 
 def get_logs():
+    """Fetches records from the database."""
     res = conn.table("price_logs").select("*").order("date", desc=True).execute()
     df = pd.DataFrame(res.data)
     if not df.empty:
@@ -67,7 +69,7 @@ def get_logs():
             df['tax_rate'] = "No tax"
     return df
 
-# --- 4. LOGIN ---
+# --- 4. LOGIN SYSTEM ---
 if "role" not in st.session_state:
     st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}" width="150"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -76,7 +78,7 @@ if "role" not in st.session_state:
         if st.button("Access"):
             if pwd == "admin123": st.session_state.role = "admin"
             elif pwd == "boss456": st.session_state.role = "viewer"
-            else: st.error("Invalid")
+            else: st.error("Invalid Key")
             if "role" in st.session_state: st.rerun()
     st.stop()
 
@@ -108,15 +110,9 @@ if selected == "Entry":
         
         if st.form_submit_button("Submit Entry"):
             if p == "" or d == "" or pr <= 0:
-                st.error("Please ensure all fields are correctly filled.")
+                st.error("Please fill all fields.")
             else:
-                conn.table("price_logs").insert({
-                    "product": p, 
-                    "distributor": d, 
-                    "price": pr, 
-                    "tax_rate": tx,
-                    "date": str(dt)
-                }).execute()
+                conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "tax_rate": tx, "date": str(dt)}).execute()
                 st.success("Record Saved")
                 st.cache_data.clear()
     
@@ -124,7 +120,6 @@ if selected == "Entry":
     df_recent = get_logs()
     if not df_recent.empty:
         df_recent['date_display'] = df_recent['date'].dt.strftime('%d-%m-%Y')
-        # Displaying 'Tax %' as the column header
         st.dataframe(df_recent[['date_display', 'product', 'distributor', 'price', 'tax_rate']].rename(columns={'tax_rate': 'Tax %'}).head(10), 
                      use_container_width=True, hide_index=True)
 
@@ -133,23 +128,28 @@ elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Items</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        st.write("Product List")
-        new_p = st.text_input("Add New Product", key="np")
+        st.write("#### Products")
+        # Searchable Dropdown for checking existence
+        st.selectbox("Search/View Registered Products", [""] + p_list, key="search_p")
+        new_p = st.text_input("Add New Product Name", key="np")
         if st.button("Save Product"):
             if new_p and new_p not in p_list:
                 conn.table("products").insert({"name": new_p}).execute()
                 st.cache_data.clear()
                 st.rerun()
-        st.dataframe(pd.DataFrame(p_list, columns=["Registered Products"]), use_container_width=True, hide_index=True)
+            elif new_p in p_list: st.warning("Product already registered.")
+            
     with c2:
-        st.write("Distributor List")
-        new_d = st.text_input("Add New Distributor", key="nd")
+        st.write("#### Distributors")
+        # Searchable Dropdown for checking existence
+        st.selectbox("Search/View Registered Distributors", [""] + d_list, key="search_d")
+        new_d = st.text_input("Add New Distributor Name", key="nd")
         if st.button("Save Distributor"):
             if new_d and new_d not in d_list:
                 conn.table("distributors").insert({"name": new_d}).execute()
                 st.cache_data.clear()
                 st.rerun()
-        st.dataframe(pd.DataFrame(d_list, columns=["Registered Distributors"]), use_container_width=True, hide_index=True)
+            elif new_d in d_list: st.warning("Distributor already registered.")
 
 # --- PAGE: MANAGE ---
 elif selected == "Manage":
@@ -157,24 +157,22 @@ elif selected == "Manage":
     df = get_logs()
     if not df.empty:
         df['date'] = df['date'].dt.date
-        # Mapping column name for display
         df_display = df.rename(columns={'tax_rate': 'Tax %'})
         
         edited = st.data_editor(df_display, key="editor", num_rows="dynamic", use_container_width=True, hide_index=True,
                                column_config={
                                    "id": None, 
+                                   "product": st.column_config.SelectboxColumn("Product", options=p_list, required=True),
+                                   "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list, required=True),
                                    "date": st.column_config.DateColumn(format="DD-MM-YYYY"),
                                    "Tax %": st.column_config.SelectboxColumn("Tax %", options=tax_options, required=True)
                                })
         if st.button("Commit Changes"):
-            # We map back 'Tax %' to 'tax_rate' for database update
             for row in st.session_state["editor"]["deleted_rows"]:
                 conn.table("price_logs").delete().eq("id", df.iloc[row]["id"]).execute()
             for idx, updates in st.session_state["editor"]["edited_rows"].items():
                 if "date" in updates: updates["date"] = str(updates["date"])
-                # Handle renaming back to tech name if user edited tax
-                if "Tax %" in updates:
-                    updates["tax_rate"] = updates.pop("Tax %")
+                if "Tax %" in updates: updates["tax_rate"] = updates.pop("Tax %")
                 conn.table("price_logs").update(updates).eq("id", df.iloc[idx]["id"]).execute()
             st.success("Database Updated")
             st.cache_data.clear()
@@ -189,12 +187,9 @@ elif selected == "Analyser":
         df_sub = df[df['product'] == target].copy()
         if not df_sub.empty:
             st.metric("Lowest Price Found", f"{df_sub['price'].min():.2f} €")
-            st.write("Full History:")
             df_sub['date_display'] = df_sub['date'].dt.strftime('%d-%m-%Y')
             history_df = df_sub.sort_values('date', ascending=False).rename(columns={'tax_rate': 'Tax %'})
-            st.dataframe(history_df[['date_display', 'distributor', 'price', 'Tax %']], 
-                         use_container_width=True, hide_index=True,
-                         column_config={"date_display": "Date", "price": st.column_config.NumberColumn(format="%.2f €")})
+            st.dataframe(history_df[['date_display', 'distributor', 'price', 'Tax %']], use_container_width=True, hide_index=True)
             
             fig = px.bar(df_sub.groupby("distributor")['price'].min().reset_index(), x="distributor", y="price", color_discrete_sequence=[PINK])
             fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
@@ -215,4 +210,3 @@ elif selected == "Export":
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_f[['date', 'product', 'distributor', 'price', 'Tax %']].to_excel(writer, index=False)
             st.download_button("Click to Download", data=buffer.getvalue(), file_name="Gmax_Report.xlsx", use_container_width=True)
-            
