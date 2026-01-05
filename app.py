@@ -9,36 +9,53 @@ import io
 # --- 1. CONFIGURATION ---
 LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a423573672203bc38f5fbcf5f5a56ac18380ebb3/dp%20logo.png"
 PINK = "#ff1774"
-HASH_WHITE = "#f8f9fa" # The "Hash White" you requested
+DARK_BG = "#0e1117"  # Main Background (Black-ish)
+CARD_BG = "#262730"  # Card Background (Dark Grey)
+TEXT_COLOR = "#ffffff"
 
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. PROFESSIONAL CSS (PINK & WHITE THEME) ---
+# --- 2. PROFESSIONAL DARK CSS ---
 st.markdown(f"""
     <style>
-    /* Main Background - Hash White */
-    .stApp {{ background-color: {HASH_WHITE}; }}
+    /* Main Background */
+    .stApp {{ background-color: {DARK_BG}; }}
     
-    /* Clean Cards (White Blocks) */
-    div.block-container {{ padding-top: 2rem; }}
-    div[data-testid="stForm"] {{ background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    /* Inputs & Selectboxes */
+    .stTextInput input, .stSelectbox div, .stNumberInput input, .stDateInput input {{
+        background-color: {CARD_BG} !important;
+        color: white !important;
+        border: 1px solid #444 !important;
+    }}
     
-    /* Text Colors */
-    h1, h2, h3, h4 {{ color: #333333 !important; font-family: 'Arial', sans-serif; }}
+    /* Form Cards (Dark Grey Blocks) */
+    div[data-testid="stForm"] {{ 
+        background-color: {CARD_BG}; 
+        padding: 20px; 
+        border-radius: 8px; 
+        border: 1px solid #333;
+    }}
+    
+    /* Text Styling */
+    h1, h2, h3, h4, p, label {{ color: {TEXT_COLOR} !important; font-family: 'Arial', sans-serif; }}
     strong {{ color: {PINK}; }}
     
-    /* Buttons - Pink & Fast */
+    /* Tables */
+    div[data-testid="stDataFrame"] {{ background-color: {CARD_BG}; }}
+    
+    /* Buttons */
     div.stButton > button {{ 
         background-color: {PINK}; 
         color: white; 
         border: none; 
         border-radius: 4px; 
         font-weight: bold;
+        transition: 0.3s;
     }}
-    div.stButton > button:hover {{ background-color: #d0125f; }}
+    div.stButton > button:hover {{ background-color: #d0125f; border: 1px solid white; }}
     
-    /* Remove clutter */
+    /* Hide Default Header/Footer */
     #MainMenu {{visibility: hidden;}}
     footer {{visibility: hidden;}}
     header {{visibility: hidden;}}
@@ -48,13 +65,13 @@ st.markdown(f"""
 # --- 3. HIGH-SPEED CACHING ---
 @st.cache_data(ttl=600)
 def get_master_data():
-    """Loads Products & Distributors instantly from memory."""
+    """Fetches Dropdown Options (Cached for 10 mins)"""
     p = conn.table("products").select("name").execute()
     d = conn.table("distributors").select("name").execute()
     return sorted([r['name'] for r in p.data]), sorted([r['name'] for r in d.data])
 
 def get_logs():
-    """Fetches logs live. No cache here so you see updates instantly."""
+    """Fetches Live Data (No Cache for Instant Updates)"""
     res = conn.table("price_logs").select("*").order("date", desc=True).execute()
     df = pd.DataFrame(res.data)
     if not df.empty: df['date'] = pd.to_datetime(df['date'])
@@ -65,7 +82,7 @@ if "role" not in st.session_state:
     c1, c2, c3 = st.columns([1, 1, 1])
     with c2:
         st.image(LOGO_URL, width=120)
-        st.markdown("<h3 style='text-align: center;'>System Access</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align: center; color: white;'>System Access</h3>", unsafe_allow_html=True)
         pwd = st.text_input("Password", type="password", label_visibility="collapsed")
         if st.button("Login", use_container_width=True):
             if pwd == "admin123": st.session_state.role = "admin"
@@ -74,7 +91,7 @@ if "role" not in st.session_state:
             if "role" in st.session_state: st.rerun()
     st.stop()
 
-# --- 5. CLEAN SIDEBAR ---
+# --- 5. DARK SIDEBAR ---
 with st.sidebar:
     st.image(LOGO_URL, width=100)
     
@@ -85,13 +102,14 @@ with st.sidebar:
         opts = ["Entry", "Register", "Manage", "Analyser", "Export"]
         icons = ["plus-square", "archive", "pencil", "graph-up", "download"]
     
+    # Custom Dark Menu Style
     selected = option_menu(
         "Menu", opts, icons=icons, default_index=0,
         styles={
-            "container": {"padding": "0!important", "background-color": HASH_WHITE},
+            "container": {"padding": "0!important", "background-color": DARK_BG},
             "icon": {"color": PINK, "font-size": "14px"}, 
-            "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px"},
-            "nav-link-selected": {"background-color": PINK},
+            "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px", "color": "white"},
+            "nav-link-selected": {"background-color": "#333333"},
         }
     )
     
@@ -100,7 +118,7 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# Load Data
+# Load Lists
 p_list, d_list = get_master_data()
 
 # --- TAB: ENTRY ---
@@ -119,25 +137,25 @@ if selected == "Entry":
         if st.form_submit_button("Save Record", use_container_width=True):
             if p != "Select..." and d != "Select...":
                 conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "date": str(dt)}).execute()
-                st.success("Saved")
+                st.success("Record Saved")
                 st.cache_data.clear()
                 st.rerun()
             else:
-                st.error("Missing Data")
+                st.error("Missing Product or Distributor")
 
     st.write("---")
     st.subheader("Recent Logs")
     df = get_logs()
     
     if not df.empty:
-        # Filters
+        # Dark Mode Filters
         fc1, fc2 = st.columns(2)
         fp = fc1.multiselect("Filter Product", p_list)
         fd = fc2.multiselect("Filter Distributor", d_list)
         if fp: df = df[df['product'].isin(fp)]
         if fd: df = df[df['distributor'].isin(fd)]
 
-        # Table
+        # Clean Table
         df['date_str'] = df['date'].dt.strftime('%d-%m-%Y')
         st.dataframe(
             df[['date_str', 'product', 'distributor', 'price']],
@@ -154,24 +172,24 @@ elif selected == "Register":
     c1, c2 = st.columns(2)
     
     with c1:
-        st.write("**New Product**")
+        st.write("New Product")
         new_p = st.text_input("Name", key="np", label_visibility="collapsed")
         if st.button("Add Product", use_container_width=True):
             if new_p and new_p not in p_list:
                 conn.table("products").insert({"name": new_p}).execute()
                 st.cache_data.clear()
                 st.rerun()
-            elif new_p: st.warning("Exists")
+            elif new_p: st.warning("Already Exists")
 
     with c2:
-        st.write("**New Distributor**")
+        st.write("New Distributor")
         new_d = st.text_input("Name", key="nd", label_visibility="collapsed")
         if st.button("Add Distributor", use_container_width=True):
             if new_d and new_d not in d_list:
                 conn.table("distributors").insert({"name": new_d}).execute()
                 st.cache_data.clear()
                 st.rerun()
-            elif new_d: st.warning("Exists")
+            elif new_d: st.warning("Already Exists")
 
 # --- TAB: MANAGE ---
 elif selected == "Manage":
@@ -180,6 +198,8 @@ elif selected == "Manage":
     
     if not df_m.empty:
         df_m['date'] = df_m['date'].dt.date
+        st.info("Select rows to delete or double-click cells to edit.")
+        
         edited = st.data_editor(
             df_m,
             key="editor",
@@ -221,17 +241,25 @@ elif selected == "Analyser":
             c1.metric("Best Price", f"{min_p:.2f} €")
             c2.metric("Total Entries", len(df_sub))
             
-            st.write("### Best Distributors")
+            st.write("Best Distributors")
             best = df_sub[df_sub['price'] == min_p]
             for _, r in best.iterrows():
                 st.info(f"{r['distributor']} - {r['date'].strftime('%d-%m-%Y')}")
             
-            st.write("### Spend Overview")
+            st.write("Spend Overview")
             grp = df_sub.groupby("distributor")['price'].sum().reset_index()
             fig = px.bar(grp, x="distributor", y="price", color="distributor", 
                          text_auto='.2s', color_discrete_sequence=[PINK])
-            fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title=None, 
-                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            
+            # Dark Mode Graph
+            fig.update_layout(
+                showlegend=False, 
+                xaxis_title=None, 
+                yaxis_title=None, 
+                paper_bgcolor="rgba(0,0,0,0)", 
+                plot_bgcolor="rgba(0,0,0,0)",
+                font_color="white"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
 # --- TAB: EXPORT ---
