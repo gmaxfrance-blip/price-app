@@ -15,17 +15,13 @@ CARD_BG = "#262730"
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. BRUTALLY CLEAN CSS (MOBILE & PC FLEXIBLE) ---
+# --- 2. CSS STYLING ---
 st.markdown(f"""
     <style>
-    /* Flexible Container */
     .stApp {{ background-color: {DARK_BG}; }}
-    
-    /* Center Logo & Make it Responsive */
     .logo-container {{ display: flex; justify-content: center; padding: 10px; }}
     .logo-container img {{ max-width: 100%; height: auto; width: 120px; }}
 
-    /* Responsive Grid for Forms */
     div[data-testid="stForm"] {{ 
         background-color: {CARD_BG}; 
         padding: 1.5rem; 
@@ -33,13 +29,11 @@ st.markdown(f"""
         border: 1px solid #333; 
     }}
 
-    /* Mobile Text Adjustments */
     @media (max-width: 640px) {{
         h1, h2, h3 {{ font-size: 1.2rem !important; }}
         .stMetric label {{ font-size: 0.8rem !important; }}
     }}
 
-    /* Professional Inputs */
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
         background-color: #3b3d4a !important;
         color: white !important;
@@ -120,42 +114,50 @@ if selected == "Entry":
                 st.cache_data.clear()
             else: st.error("All fields required")
 
-# --- PAGE: REGISTER ---
+# --- PAGE: REGISTER (WITH SEARCHABLE DROPDOWNS) ---
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
     with c1:
-        st.write("**New Product Name**")
-        new_p = st.text_input("Type Product Name", key="np", label_visibility="collapsed")
-        # Live Check Logic
-        if new_p:
-            if new_p in p_list: st.error(f"'{new_p}' is already registered.")
-            else: st.success(f"'{new_p}' is available.")
+        st.subheader("Products")
+        # Searchable dropdown to check existing
+        st.selectbox("Search existing products", [""] + p_list, key="search_p")
         
-        if st.button("Add Product"):
-            if new_p and new_p not in p_list:
-                conn.table("products").insert({"name": new_p}).execute()
-                st.cache_data.clear()
-                st.rerun()
+        # Field to add new
+        new_p = st.text_input("Add New Product Name", key="np")
+        if new_p:
+            if new_p.strip() in p_list:
+                st.error(f"'{new_p}' already exists.")
+            else:
+                st.success(f"'{new_p}' is new.")
+                if st.button("Save Product"):
+                    conn.table("products").insert({"name": new_p.strip()}).execute()
+                    st.cache_data.clear()
+                    st.rerun()
+        
+        st.write("---")
+        st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True, hide_index=True)
 
-        st.dataframe(pd.DataFrame(p_list, columns=["Registered Products"]), use_container_width=True, hide_index=True)
-            
     with c2:
-        st.write("**New Distributor Name**")
-        new_d = st.text_input("Type Distributor Name", key="nd", label_visibility="collapsed")
-        # Live Check Logic
+        st.subheader("Distributors")
+        # Searchable dropdown to check existing
+        st.selectbox("Search existing distributors", [""] + d_list, key="search_d")
+        
+        # Field to add new
+        new_d = st.text_input("Add New Distributor Name", key="nd")
         if new_d:
-            if new_d in d_list: st.error(f"'{new_d}' is already registered.")
-            else: st.success(f"'{new_d}' is available.")
-            
-        if st.button("Add Distributor"):
-            if new_d and new_d not in d_list:
-                conn.table("distributors").insert({"name": new_d}).execute()
-                st.cache_data.clear()
-                st.rerun()
+            if new_d.strip() in d_list:
+                st.error(f"'{new_d}' already exists.")
+            else:
+                st.success(f"'{new_d}' is new.")
+                if st.button("Save Distributor"):
+                    conn.table("distributors").insert({"name": new_d.strip()}).execute()
+                    st.cache_data.clear()
+                    st.rerun()
 
-        st.dataframe(pd.DataFrame(d_list, columns=["Registered Distributors"]), use_container_width=True, hide_index=True)
+        st.write("---")
+        st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True, hide_index=True)
 
 # --- PAGE: MANAGE ---
 elif selected == "Manage":
@@ -189,12 +191,11 @@ elif selected == "Analyser":
         
         if not df_sub.empty:
             min_price = df_sub['price'].min()
-            # Find all distributors at the lowest price
             best_distributors = df_sub[df_sub['price'] == min_price]['distributor'].unique()
             
             st.markdown(f"""
             <div style='background-color:{CARD_BG}; padding:15px; border-radius:10px; border-left: 5px solid {PINK};'>
-                <p style='margin:0; font-size:14px;'>BEST PRIX FOUND</p>
+                <p style='margin:0; font-size:14px;'>BEST PRICE FOUND</p>
                 <h2 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h2>
                 <p style='margin-top:10px; font-weight:bold;'>Available at: {", ".join(best_distributors)}</p>
             </div>
