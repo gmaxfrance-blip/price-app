@@ -71,7 +71,7 @@ with st.sidebar:
 p_list, d_list = get_master_data()
 st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
 
-# --- ENTRY ---
+# --- PAGE: ENTRY ---
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
     with st.form("entry_form", clear_on_submit=True):
@@ -87,54 +87,48 @@ if selected == "Entry":
                 st.cache_data.clear()
             else: st.error("All fields required")
 
-# --- REGISTER (Autosuggest + New Add) ---
+# --- PAGE: REGISTER (FIXED DROPDOWN AUTOCOMPLETE) ---
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
     with c1:
-        st.write("**New Product Name**")
-        # Text input allows brand new entries
-        new_p = st.text_input("Type new product name...", key="np_input", help="Type 'coca' to see if variations exist below")
+        st.write("**Add Product**")
+        # Search existing logic
+        search_p = st.selectbox("Search existing...", [""] + p_list, key="search_p_box")
+        # Text input for the actual addition
+        new_p = st.text_input("Or type NEW product name:", value=search_p, key="np_final")
         
-        # This acts as the "Dropdown" to show you what is already there
-        if new_p:
-            suggestions = [x for x in p_list if new_p.lower() in x.lower()]
-            if suggestions:
-                st.info(f"Existing similar items: {', '.join(suggestions[:5])}")
-        
-        if st.button("Add Product"):
-            if new_p:
-                if new_p.strip() in p_list:
-                    st.warning("Already registered")
-                else:
-                    conn.table("products").insert({"name": new_p.strip()}).execute()
-                    st.success(f"'{new_p}' Added")
-                    st.cache_data.clear()
-                    st.rerun()
+        if st.button("Confirm Add Product"):
+            if new_p and new_p.strip() not in p_list:
+                conn.table("products").insert({"name": new_p.strip().upper()}).execute()
+                st.success(f"Registered: {new_p}")
+                st.cache_data.clear()
+                st.rerun()
+            elif new_p in p_list:
+                st.warning("This is already registered.")
+
         st.dataframe(pd.DataFrame(p_list, columns=["Registered Products"]), use_container_width=True, hide_index=True)
             
     with c2:
-        st.write("**New Distributor Name**")
-        new_d = st.text_input("Type new distributor name...", key="nd_input")
-        
-        if new_d:
-            suggestions_d = [x for x in d_list if new_d.lower() in x.lower()]
-            if suggestions_d:
-                st.info(f"Existing similar: {', '.join(suggestions_d[:5])}")
+        st.write("**Add Distributor**")
+        # Search existing logic
+        search_d = st.selectbox("Search existing...", [""] + d_list, key="search_d_box")
+        # Text input for the actual addition
+        new_d = st.text_input("Or type NEW distributor name:", value=search_d, key="nd_final")
                 
-        if st.button("Add Distributor"):
-            if new_d:
-                if new_d.strip() in d_list:
-                    st.warning("Already registered")
-                else:
-                    conn.table("distributors").insert({"name": new_d.strip()}).execute()
-                    st.success(f"'{new_d}' Added")
-                    st.cache_data.clear()
-                    st.rerun()
+        if st.button("Confirm Add Distributor"):
+            if new_d and new_d.strip() not in d_list:
+                conn.table("distributors").insert({"name": new_d.strip().upper()}).execute()
+                st.success(f"Registered: {new_d}")
+                st.cache_data.clear()
+                st.rerun()
+            elif new_d in d_list:
+                st.warning("This is already registered.")
+
         st.dataframe(pd.DataFrame(d_list, columns=["Registered Distributors"]), use_container_width=True, hide_index=True)
 
-# --- ANALYSER (Multiple Distributors Logic) ---
+# --- PAGE: ANALYSER (MULTIPLE DISTRIBUTORS & HISTORY TABLE) ---
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
     target = st.selectbox("Search Product", [""] + p_list)
@@ -143,7 +137,7 @@ elif selected == "Analyser":
         df_sub = df[df['product'] == target].copy()
         if not df_sub.empty:
             min_price = df_sub['price'].min()
-            # Logic to find ALL distributors with this min price
+            # LIST ALL DISTRIBUTORS AT THIS PRICE
             best_rows = df_sub[df_sub['price'] == min_price]
             all_best_dists = ", ".join(best_rows['distributor'].unique())
             
@@ -156,30 +150,29 @@ elif selected == "Analyser":
             """, unsafe_allow_html=True)
             
             st.write("---")
-            st.write(f"**Price History for {target}**")
+            st.write(f"**Full History: {target}**")
             st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
 
-# --- EXPORT (Date Filter Logic) ---
+# --- PAGE: EXPORT (DATE FILTER) ---
 elif selected == "Export":
-    st.markdown("<h3 style='text-align: center;'>Filtered Excel Export</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center;'>Excel Export</h3>", unsafe_allow_html=True)
     df = get_logs()
     if not df.empty:
         col1, col2 = st.columns(2)
         with col1:
-            d_start = st.date_input("From", date.today() - timedelta(days=30))
+            d1 = st.date_input("From Date", date.today() - timedelta(days=30))
         with col2:
-            d_end = st.date_input("To", date.today())
+            d2 = st.date_input("To Date", date.today())
             
-        filtered_df = df[(df['date'] >= d_start) & (df['date'] <= d_end)]
-        st.write(f"Showing {len(filtered_df)} items in selected range.")
+        filtered_df = df[(df['date'] >= d1) & (df['date'] <= d2)]
         
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             filtered_df.to_excel(writer, index=False)
         
         st.download_button(
-            label=f"Download {d_start} to {d_end} (.xlsx)",
+            label=f"Download {d1} to {d2} Report",
             data=buffer.getvalue(),
-            file_name=f"Gmax_Report_{d_start}_{d_end}.xlsx",
+            file_name=f"Gmax_Report_{d1}_{d2}.xlsx",
             use_container_width=True
         )
