@@ -57,13 +57,11 @@ st.markdown(f"""
 # --- 3. DATA LOGIC ---
 @st.cache_data(ttl=600)
 def get_master_data():
-    """Live master list retrieval."""
     p = conn.table("products").select("name").execute()
     d = conn.table("distributors").select("name").execute()
     return sorted([r['name'] for r in p.data]), sorted([r['name'] for r in d.data])
 
 def get_logs():
-    """Live transaction log retrieval."""
     res = conn.table("price_logs").select("*").order("date", desc=True).execute()
     df = pd.DataFrame(res.data)
     if not df.empty:
@@ -113,42 +111,40 @@ if selected == "Entry":
                 st.cache_data.clear()
             else: st.error("All fields required")
 
-# --- PAGE: REGISTER ---
+# --- PAGE: REGISTER (Searchable logic applied here) ---
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
     with c1:
-        st.write("**Add New Product Name**")
-        # Searchable Selectbox: User can search existing OR type something new
-        new_p = st.selectbox("Search or Type Name", options=p_list, index=None, placeholder="Type product name...", key="np_select")
+        st.write("**Product Name**")
+        # Searchable selectbox that allows typing
+        new_p = st.selectbox("Search existing or type new...", options=p_list, index=None, key="p_reg", placeholder="Type to search products...")
         
         if st.button("Add Product"):
-            if new_p:
-                if new_p in p_list:
-                    st.warning(f"'{new_p}' is already registered.")
-                else:
-                    conn.table("products").insert({"name": new_p}).execute()
-                    st.success(f"'{new_p}' Added!")
-                    st.cache_data.clear()
-                    st.rerun()
+            if new_p and new_p not in p_list:
+                conn.table("products").insert({"name": new_p}).execute()
+                st.success(f"'{new_p}' registered!")
+                st.cache_data.clear()
+                st.rerun()
+            elif new_p in p_list:
+                st.warning("This product is already in the list.")
 
         st.dataframe(pd.DataFrame(p_list, columns=["Registered Products"]), use_container_width=True, hide_index=True)
             
     with c2:
-        st.write("**Add New Distributor Name**")
-        # Searchable Selectbox: User can search existing OR type something new
-        new_d = st.selectbox("Search or Type Name", options=d_list, index=None, placeholder="Type distributor name...", key="nd_select")
+        st.write("**Distributor Name**")
+        # Searchable selectbox that allows typing
+        new_d = st.selectbox("Search existing or type new...", options=d_list, index=None, key="d_reg", placeholder="Type to search distributors...")
             
         if st.button("Add Distributor"):
-            if new_d:
-                if new_d in d_list:
-                    st.warning(f"'{new_d}' is already registered.")
-                else:
-                    conn.table("distributors").insert({"name": new_d}).execute()
-                    st.success(f"'{new_d}' Added!")
-                    st.cache_data.clear()
-                    st.rerun()
+            if new_d and new_d not in d_list:
+                conn.table("distributors").insert({"name": new_d}).execute()
+                st.success(f"'{new_d}' registered!")
+                st.cache_data.clear()
+                st.rerun()
+            elif new_d in d_list:
+                st.warning("This distributor is already in the list.")
 
         st.dataframe(pd.DataFrame(d_list, columns=["Registered Distributors"]), use_container_width=True, hide_index=True)
 
@@ -188,7 +184,7 @@ elif selected == "Analyser":
             
             st.markdown(f"""
             <div style='background-color:{CARD_BG}; padding:15px; border-radius:10px; border-left: 5px solid {PINK};'>
-                <p style='margin:0; font-size:14px;'>BEST PRIX FOUND</p>
+                <p style='margin:0; font-size:14px;'>BEST PRICE FOUND</p>
                 <h2 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h2>
                 <p style='margin-top:10px; font-weight:bold;'>Available at: {", ".join(best_distributors)}</p>
             </div>
@@ -196,10 +192,10 @@ elif selected == "Analyser":
             
             st.write("---")
             st.write("**Full History for this Product**")
-            # FIX: Sort the data BEFORE selecting subsets of columns
-            df_display = df_sub.sort_values('date', ascending=False).copy()
-            df_display['date_str'] = df_display['date'].dt.strftime('%d-%m-%Y')
-            st.dataframe(df_display[['date_str', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
+            # Fixed sorting logic to avoid KeyError
+            df_plot = df_sub.sort_values(by='date', ascending=False)
+            df_plot['date_str'] = df_plot['date'].dt.strftime('%d-%m-%Y')
+            st.dataframe(df_plot[['date_str', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
 
 # --- PAGE: EXPORT ---
 elif selected == "Export":
