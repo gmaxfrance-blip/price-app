@@ -2,7 +2,7 @@ import streamlit as st
 from st_supabase_connection import SupabaseConnection
 from streamlit_option_menu import option_menu
 import pandas as pd
-from datetime import date
+from datetime import date, timedelta
 import io 
 
 # --- 1. CONFIGURATION & RESPONSIVE UI ---
@@ -20,36 +20,14 @@ st.markdown(f"""
     .stApp {{ background-color: {DARK_BG}; }}
     .logo-container {{ display: flex; justify-content: center; padding: 10px; }}
     .logo-container img {{ max-width: 100%; height: auto; width: 120px; }}
-
-    div[data-testid="stForm"] {{ 
-        background-color: {CARD_BG}; 
-        padding: 1.5rem; 
-        border-radius: 8px; 
-        border: 1px solid #333; 
-    }}
-
-    @media (max-width: 640px) {{
-        h1, h2, h3 {{ font-size: 1.2rem !important; }}
-        .stMetric label {{ font-size: 0.8rem !important; }}
-    }}
-
+    div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
-        background-color: #3b3d4a !important;
-        color: white !important;
-        border: 1px solid #555 !important;
+        background-color: #3b3d4a !important; color: white !important; border: 1px solid #555 !important;
     }}
-    
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
-    
     div.stButton > button {{ 
-        background-color: {PINK} !important; 
-        color: white !important; 
-        border-radius: 4px; 
-        width: 100%; 
-        font-weight: bold; 
-        border: none;
+        background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
     }}
-    
     #MainMenu, footer, header {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -65,8 +43,7 @@ def get_logs():
     res = conn.table("price_logs").select("*").order("date", desc=True).execute()
     df = pd.DataFrame(res.data)
     if not df.empty:
-        df['date'] = pd.to_datetime(df['date'])
-        if 'tax_rate' not in df.columns: df['tax_rate'] = "No tax"
+        df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
 # --- 4. AUTHENTICATION ---
@@ -103,7 +80,6 @@ if selected == "Entry":
         pr = st.number_input("Price HT (€)", min_value=0.0, step=0.01)
         tx = st.selectbox("Tax %", ["5.5%", "20%", "No tax"])
         dt = st.date_input("Date", date.today())
-        
         if st.form_submit_button("Submit Entry"):
             if p and d and pr > 0:
                 conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "tax_rate": tx, "date": str(dt)}).execute()
@@ -111,41 +87,34 @@ if selected == "Entry":
                 st.cache_data.clear()
             else: st.error("All fields required")
 
-# --- PAGE: REGISTER (Searchable logic applied here) ---
+# --- PAGE: REGISTER (SEARCHABLE AUTOCOMPLETE) ---
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
     with c1:
         st.write("**Product Name**")
-        # Searchable selectbox that allows typing
-        new_p = st.selectbox("Search existing or type new...", options=p_list, index=None, key="p_reg", placeholder="Type to search products...")
-        
+        # Selectbox acts as autocomplete. Type to filter existing, or type new name.
+        new_p = st.selectbox("Type to Search/Add Product", options=p_list, index=None, placeholder="Search or type new name...", key="p_reg")
         if st.button("Add Product"):
             if new_p and new_p not in p_list:
                 conn.table("products").insert({"name": new_p}).execute()
-                st.success(f"'{new_p}' registered!")
+                st.success(f"'{new_p}' Added")
                 st.cache_data.clear()
                 st.rerun()
-            elif new_p in p_list:
-                st.warning("This product is already in the list.")
-
+            elif new_p in p_list: st.warning("Already exists")
         st.dataframe(pd.DataFrame(p_list, columns=["Registered Products"]), use_container_width=True, hide_index=True)
             
     with c2:
         st.write("**Distributor Name**")
-        # Searchable selectbox that allows typing
-        new_d = st.selectbox("Search existing or type new...", options=d_list, index=None, key="d_reg", placeholder="Type to search distributors...")
-            
+        new_d = st.selectbox("Type to Search/Add Distributor", options=d_list, index=None, placeholder="Search or type new name...", key="d_reg")
         if st.button("Add Distributor"):
             if new_d and new_d not in d_list:
                 conn.table("distributors").insert({"name": new_d}).execute()
-                st.success(f"'{new_d}' registered!")
+                st.success(f"'{new_d}' Added")
                 st.cache_data.clear()
                 st.rerun()
-            elif new_d in d_list:
-                st.warning("This distributor is already in the list.")
-
+            elif new_d in d_list: st.warning("Already exists")
         st.dataframe(pd.DataFrame(d_list, columns=["Registered Distributors"]), use_container_width=True, hide_index=True)
 
 # --- PAGE: MANAGE ---
@@ -153,7 +122,6 @@ elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
     df = get_logs()
     if not df.empty:
-        df['date'] = df['date'].dt.date
         edited = st.data_editor(df.rename(columns={'tax_rate': 'Tax %'}), key="editor", num_rows="dynamic", use_container_width=True, hide_index=True,
                                column_config={
                                    "id": None, 
@@ -173,36 +141,49 @@ elif selected == "Manage":
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
     target = st.selectbox("Search Product", [""] + p_list)
-    
     if target:
         df = get_logs()
         df_sub = df[df['product'] == target].copy()
-        
         if not df_sub.empty:
             min_price = df_sub['price'].min()
-            best_distributors = df_sub[df_sub['price'] == min_price]['distributor'].unique()
+            # Find all distributors that offer the minimum price
+            best_rows = df_sub[df_sub['price'] == min_price]
+            best_dists = ", ".join(best_rows['distributor'].unique())
             
             st.markdown(f"""
             <div style='background-color:{CARD_BG}; padding:15px; border-radius:10px; border-left: 5px solid {PINK};'>
                 <p style='margin:0; font-size:14px;'>BEST PRICE FOUND</p>
                 <h2 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h2>
-                <p style='margin-top:10px; font-weight:bold;'>Available at: {", ".join(best_distributors)}</p>
+                <p style='margin-top:10px; font-weight:bold;'>Available at: {best_dists}</p>
             </div>
             """, unsafe_allow_html=True)
             
             st.write("---")
-            st.write("**Full History for this Product**")
-            # Fixed sorting logic to avoid KeyError
-            df_plot = df_sub.sort_values(by='date', ascending=False)
-            df_plot['date_str'] = df_plot['date'].dt.strftime('%d-%m-%Y')
-            st.dataframe(df_plot[['date_str', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
+            st.write(f"**Full History: {target}**")
+            df_sub = df_sub.sort_values('date', ascending=False)
+            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
 
 # --- PAGE: EXPORT ---
 elif selected == "Export":
     st.markdown("<h3 style='text-align: center;'>Excel Export</h3>", unsafe_allow_html=True)
     df = get_logs()
     if not df.empty:
+        c1, c2 = st.columns(2)
+        with c1: start_d = st.date_input("Start Date", date.today() - timedelta(days=30))
+        with c2: end_d = st.date_input("End Date", date.today())
+        
+        # Filter logic
+        filtered_df = df[(df['date'] >= start_d) & (df['date'] <= end_d)]
+        
+        st.write(f"Found {len(filtered_df)} records in this range.")
+        
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        st.download_button("Download Full Database (.xlsx)", data=buffer.getvalue(), file_name="Gmax_Database.xlsx", use_container_width=True)
+            filtered_df.to_excel(writer, index=False)
+        
+        st.download_button(
+            label=f"Download {start_d} to {end_d} (.xlsx)",
+            data=buffer.getvalue(),
+            file_name=f"Gmax_Export_{start_d}_{end_d}.xlsx",
+            use_container_width=True
+        )
