@@ -11,24 +11,16 @@ PINK = "#ff1774"
 DARK_BG = "#0e1117"
 CARD_BG = "#262730"
 
-st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide", initial_sidebar_state="expanded")
+# Standard layout, no aggressive sidebar hiding
+st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. CSS FIX (SIDEBAR & UI) ---
+# --- 2. CLEAN CSS (Only for colors & inputs, NOT layout) ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
     
-    /* 1. LOCK SIDEBAR OPEN & HIDE TOGGLE */
-    section[data-testid="stSidebar"] {{ 
-        width: 300px !important; 
-        display: block !important;
-        visibility: visible !important;
-    }}
-    button[kind="header"] {{ display: none !important; }} /* Hides the collapse arrow */
-    div[data-testid="collapsedControl"] {{ display: none !important; }} 
-
-    /* 2. FORM & INPUT STYLING */
+    /* Input & Form Styling */
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
@@ -44,8 +36,7 @@ st.markdown(f"""
     .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
     .logo-container img {{ width: 140px; }}
     
-    /* Hide Streamlit Footer */
-    #MainMenu, footer, header {{visibility: hidden;}}
+    #MainMenu, footer {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
 
@@ -78,17 +69,15 @@ if "role" not in st.session_state:
 
 # --- 5. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
+    st.image(LOGO_URL, width=100)
     
-    # NAVIGATION MENU
-    # We removed the 'key' argument to prevent state-locking issues that freeze the menu
+    # Standard Option Menu without keys to prevent locking
     selected = option_menu(
-        menu_title=None, 
+        menu_title="Main Menu", 
         options=["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"], 
         icons=["plus", "list", "pencil", "search", "download"], 
         default_index=0,
         styles={
-            "container": {"background-color": DARK_BG},
             "nav-link-selected": {"background-color": PINK},
         }
     )
@@ -99,9 +88,6 @@ with st.sidebar:
         st.rerun()
 
 p_list, d_list = get_master_data()
-
-# --- HEADER LOGO ON MAIN PAGE ---
-st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
 
 # ==========================================
 # PAGE: NEW PRICE ENTRY
@@ -123,7 +109,7 @@ if selected == "Entry":
             else: st.error("Please fill all fields")
 
 # ==========================================
-# PAGE: REGISTER (SINGLE FIELD LOGIC)
+# PAGE: REGISTER (TYPE-TO-SEARCH LOGIC)
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
@@ -132,21 +118,15 @@ elif selected == "Register":
     # PRODUCT SECTION
     with c1:
         st.write("**Product Registry**")
-        # 1. INPUT FIELD: Type to search OR add new
-        reg_p = st.text_input("Type Product Name", placeholder="Start typing to check if exists...", key="reg_p_input")
+        reg_p = st.text_input("Type Product Name", placeholder="Start typing to check...", key="reg_p_input")
         
-        # 2. AUTO-CHECK LOGIC (The "Dropdown" replacement)
         if reg_p:
-            # Filter existing list based on typing
             matches = [x for x in p_list if reg_p.lower() in x.lower()]
-            
             if matches:
-                # If matches found, show them like a list so user knows it exists
                 st.dataframe(pd.DataFrame(matches, columns=["Existing Matches"]), use_container_width=True, hide_index=True)
                 if reg_p in p_list:
                     st.warning(f"'{reg_p}' is already registered.")
             else:
-                # If NO matches, user is free to add
                 st.info("New item! Click add below.")
                 
             if st.button("Add New Product", disabled=(reg_p in p_list)):
@@ -155,7 +135,6 @@ elif selected == "Register":
                 st.cache_data.clear()
                 st.rerun()
         else:
-            # Show full list if nothing typed
             st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True, hide_index=True)
 
     # DISTRIBUTOR SECTION
@@ -165,7 +144,6 @@ elif selected == "Register":
         
         if reg_d:
             matches_d = [x for x in d_list if reg_d.lower() in x.lower()]
-            
             if matches_d:
                 st.dataframe(pd.DataFrame(matches_d, columns=["Existing Matches"]), use_container_width=True, hide_index=True)
                 if reg_d in d_list:
@@ -182,7 +160,7 @@ elif selected == "Register":
             st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: MANAGE (EDIT & DELETE)
+# PAGE: MANAGE
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
@@ -206,13 +184,11 @@ elif selected == "Manage":
         
         if st.button("Commit Changes (Update/Delete)"):
             state = st.session_state["manage_editor"]
-            
-            # 1. Handle Updates
+            # Updates
             for idx, updates in state["edited_rows"].items():
                 row_id = df_manage.iloc[idx]["id"]
                 conn.table("price_logs").update(updates).eq("id", row_id).execute()
-                
-            # 2. Handle Deletions
+            # Deletes
             for idx in state["deleted_rows"]:
                 row_id = df_manage.iloc[idx]["id"]
                 conn.table("price_logs").delete().eq("id", row_id).execute()
@@ -224,7 +200,7 @@ elif selected == "Manage":
         st.warning("No records found.")
 
 # ==========================================
-# PAGE: ANALYSER (BEST PRICE + HISTORY)
+# PAGE: ANALYSER
 # ==========================================
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
@@ -236,7 +212,6 @@ elif selected == "Analyser":
         
         if not df_sub.empty:
             min_price = df_sub['price'].min()
-            # Get all distributors selling at the minimum price
             best_sellers = df_sub[df_sub['price'] == min_price]['distributor'].unique()
             best_sellers_str = ", ".join(best_sellers)
             
@@ -249,16 +224,11 @@ elif selected == "Analyser":
             """, unsafe_allow_html=True)
             
             st.subheader(f"History: {target}")
-            # Ensure sorting works by selecting columns AFTER sorting
             df_history = df_sub.sort_values(by='date', ascending=False)
-            st.dataframe(
-                df_history[['date', 'distributor', 'price', 'tax_rate']], 
-                use_container_width=True, 
-                hide_index=True
-            )
+            st.dataframe(df_history[['date', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: EXPORT (DATE FILTER)
+# PAGE: EXPORT
 # ==========================================
 elif selected == "Export":
     st.markdown("<h3 style='text-align: center;'>Excel Export</h3>", unsafe_allow_html=True)
@@ -269,7 +239,6 @@ elif selected == "Export":
         with c1: start_d = st.date_input("Start Date", date.today() - timedelta(days=30))
         with c2: end_d = st.date_input("End Date", date.today())
         
-        # Filter Data
         mask = (df['date'] >= start_d) & (df['date'] <= end_d)
         filtered_df = df[mask]
         
@@ -283,6 +252,5 @@ elif selected == "Export":
             label="Download Excel File",
             data=buffer.getvalue(),
             file_name=f"Gmax_Report_{start_d}_{end_d}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
