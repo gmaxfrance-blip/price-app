@@ -18,77 +18,21 @@ conn = st.connection("supabase", type=SupabaseConnection)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
-    
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
-    
-    /* Standard Input Styling */
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
         background-color: #3b3d4a !important; color: white !important; border: 1px solid #555 !important;
     }}
-    
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
-    
-    /* Main Action Buttons */
     div.stButton > button {{ 
         background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
     }}
-
-    /* "Dropdown" Suggestion Buttons - Make them look like a list */
-    div[data-testid="column"] button {{
-        background-color: transparent !important;
-        border: 1px solid #444 !important;
-        color: #ddd !important;
-        text-align: left !important;
-        width: 100%;
-        margin-bottom: 2px;
-    }}
-    div[data-testid="column"] button:hover {{
-        border-color: {PINK} !important;
-        color: {PINK} !important;
-    }}
-    
     .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
     .logo-container img {{ width: 140px; }}
-    
     #MainMenu, footer {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. HELPER: AUTOCOMPLETE WIDGET LOGIC ---
-def autocomplete_widget(label, options, key_prefix):
-    """
-    Creates a text input that shows clickable suggestions below it.
-    Returns the current text value.
-    """
-    # 1. Initialize State for this widget if missing
-    if f"{key_prefix}_text" not in st.session_state:
-        st.session_state[f"{key_prefix}_text"] = ""
-
-    # 2. Function to update text when a suggestion is clicked
-    def set_text(text_val):
-        st.session_state[f"{key_prefix}_text"] = text_val
-
-    # 3. The Input Field
-    user_text = st.text_input(label, key=f"{key_prefix}_text", placeholder="Type to search or add new...")
-
-    # 4. Filter Logic (The "Dropdown")
-    # Only show if user has typed something AND it's not an exact match yet
-    if user_text and user_text not in options:
-        # Simple case-insensitive match
-        matches = [opt for opt in options if user_text.lower() in opt.lower()]
-        
-        # If we have matches, show them as a vertical list of buttons
-        if matches:
-            st.caption("👇 Suggestions (Click to select):")
-            # Limit to 5 matches to keep UI clean
-            for match in matches[:5]:
-                if st.button(match, key=f"{key_prefix}_btn_{match}"):
-                    set_text(match)
-                    st.rerun()
-
-    return user_text
-
-# --- 4. DATA FUNCTIONS ---
+# --- 3. DATA FUNCTIONS ---
 @st.cache_data(ttl=300)
 def get_master_data():
     p = conn.table("products").select("name").execute()
@@ -102,7 +46,7 @@ def get_logs():
         df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
-# --- 5. AUTHENTICATION ---
+# --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
     st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 2, 1])
@@ -115,7 +59,7 @@ if "role" not in st.session_state:
             if "role" in st.session_state: st.rerun()
     st.stop()
 
-# --- 6. SIDEBAR NAVIGATION ---
+# --- 5. SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.image(LOGO_URL, width=100)
     selected = option_menu(
@@ -137,7 +81,6 @@ p_list, d_list = get_master_data()
 # ==========================================
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
-    
     with st.form("entry_form", clear_on_submit=True):
         p = st.selectbox("Product", options=[""] + p_list)
         d = st.selectbox("Distributor", options=[""] + d_list)
@@ -160,61 +103,109 @@ if selected == "Entry":
         st.dataframe(df_history, use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: REGISTER (CUSTOM AUTOCOMPLETE LOGIC)
+# PAGE: REGISTER (SMART AUTOCOMPLETE)
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
+    # Helper to handle selection click
+    def handle_selection(key_prefix, matches):
+        # Check if user clicked a row in the dataframe
+        selection = st.session_state.get(f"{key_prefix}_selection")
+        if selection and selection["selection"]["rows"]:
+            idx = selection["selection"]["rows"][0]
+            # Update the text input with the selected name
+            st.session_state[f"{key_prefix}_input"] = matches[idx]
+
     # --- PRODUCT COLUMN ---
     with c1:
         st.write("**Products**")
         
-        # 1. THE AUTOCOMPLETE WIDGET
-        # This handles Typing -> Showing Matches -> Clicking to Autofill
-        final_p_val = autocomplete_widget("Product Name", p_list, "reg_prod")
+        # 1. INPUT FIELD (Captured in Session State)
+        if "p_reg_input" not in st.session_state: st.session_state.p_reg_input = ""
         
-        # 2. SAVE LOGIC
-        # If user types something that isn't in the list, the 'Add' button handles it
-        if st.button("Save Product", key="btn_save_p"):
-            if final_p_val:
-                clean_name = final_p_val.strip().upper()
-                if clean_name in p_list:
-                    st.warning(f"'{clean_name}' is already registered.")
-                else:
-                    conn.table("products").insert({"name": clean_name}).execute()
-                    st.success(f"Registered: {clean_name}")
-                    st.session_state["reg_prod_text"] = "" # Clear input
+        p_val = st.text_input("Product Name", key="p_reg_input", placeholder="Type to search or add new...")
+        
+        # 2. FILTER LOGIC
+        matches_p = []
+        if p_val:
+            matches_p = [x for x in p_list if p_val.lower() in x.lower()]
+            
+            # Show "Dropdown" Table if matches exist AND text isn't an exact match yet
+            if matches_p and p_val.upper() not in p_list:
+                st.caption("👇 Click below to select:")
+                df_p = pd.DataFrame(matches_p, columns=["Suggestions"])
+                
+                # INTERACTIVE TABLE (Acts as Dropdown)
+                st.dataframe(
+                    df_p, 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    on_select="rerun", 
+                    selection_mode="single-row",
+                    key="p_reg_selection"
+                )
+                # Apply selection logic
+                handle_selection("p_reg", matches_p)
+
+        # 3. ACTION BUTTONS
+        if p_val:
+            if p_val.upper() in p_list:
+                st.success(f"✅ '{p_val.upper()}' is already selected/registered.")
+            else:
+                # If no exact match (New Item), show Save Button
+                if st.button(f"Save New Product: {p_val}"):
+                    conn.table("products").insert({"name": p_val.strip().upper()}).execute()
+                    st.success(f"Saved: {p_val}")
                     st.cache_data.clear()
                     st.rerun()
-
-        # 3. Reference Table
-        st.write("---")
-        st.dataframe(pd.DataFrame(p_list, columns=["Registered Products"]), use_container_width=True, hide_index=True, height=300)
 
     # --- DISTRIBUTOR COLUMN ---
     with c2:
         st.write("**Distributors**")
         
-        # 1. THE AUTOCOMPLETE WIDGET
-        final_d_val = autocomplete_widget("Distributor Name", d_list, "reg_dist")
+        # 1. INPUT FIELD
+        if "d_reg_input" not in st.session_state: st.session_state.d_reg_input = ""
         
-        # 2. SAVE LOGIC
-        if st.button("Save Distributor", key="btn_save_d"):
-            if final_d_val:
-                clean_name = final_d_val.strip().upper()
-                if clean_name in d_list:
-                    st.warning(f"'{clean_name}' is already registered.")
-                else:
-                    conn.table("distributors").insert({"name": clean_name}).execute()
-                    st.success(f"Registered: {clean_name}")
-                    st.session_state["reg_dist_text"] = "" # Clear input
+        d_val = st.text_input("Distributor Name", key="d_reg_input", placeholder="Type to search or add new...")
+        
+        # 2. FILTER LOGIC
+        matches_d = []
+        if d_val:
+            matches_d = [x for x in d_list if d_val.lower() in x.lower()]
+            
+            if matches_d and d_val.upper() not in d_list:
+                st.caption("👇 Click below to select:")
+                df_d = pd.DataFrame(matches_d, columns=["Suggestions"])
+                
+                st.dataframe(
+                    df_d, 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    on_select="rerun", 
+                    selection_mode="single-row",
+                    key="d_reg_selection"
+                )
+                handle_selection("d_reg", matches_d)
+
+        # 3. ACTION BUTTONS
+        if d_val:
+            if d_val.upper() in d_list:
+                st.success(f"✅ '{d_val.upper()}' is already selected/registered.")
+            else:
+                if st.button(f"Save New Distributor: {d_val}"):
+                    conn.table("distributors").insert({"name": d_val.strip().upper()}).execute()
+                    st.success(f"Saved: {d_val}")
                     st.cache_data.clear()
                     st.rerun()
 
-        # 3. Reference Table
-        st.write("---")
-        st.dataframe(pd.DataFrame(d_list, columns=["Registered Distributors"]), use_container_width=True, hide_index=True, height=300)
+    # Full lists at bottom
+    st.write("---")
+    with st.expander("View Full Registered Lists"):
+        col_a, col_b = st.columns(2)
+        with col_a: st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True)
+        with col_b: st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True)
 
 # ==========================================
 # PAGE: MANAGE
@@ -224,7 +215,7 @@ elif selected == "Manage":
     df_manage = get_logs()
     
     if not df_manage.empty:
-        with st.expander("🔍 Filter Options", expanded=True):
+        with st.expander("🔍 Search & Filters", expanded=True):
             col1, col2, col3 = st.columns(3)
             with col1: search_p = st.multiselect("Filter Product", options=p_list)
             with col2: search_d = st.multiselect("Filter Distributor", options=d_list)
@@ -236,7 +227,7 @@ elif selected == "Manage":
         if len(date_range) == 2:
             filtered_df = filtered_df[(filtered_df['date'] >= date_range[0]) & (filtered_df['date'] <= date_range[1])]
             
-        st.write(f"Showing {len(filtered_df)} records")
+        st.write(f"Showing **{len(filtered_df)}** records")
         
         edited_df = st.data_editor(
             filtered_df,
@@ -254,16 +245,19 @@ elif selected == "Manage":
         
         if st.button("Commit Changes"):
             state = st.session_state["manage_editor"]
+            # Map index back to filtered ID
             for idx, updates in state["edited_rows"].items():
                 if idx < len(filtered_df):
-                    conn.table("price_logs").update(updates).eq("id", filtered_df.iloc[idx]["id"]).execute()
+                    row_id = filtered_df.iloc[idx]["id"]
+                    conn.table("price_logs").update(updates).eq("id", row_id).execute()
             for idx in state["deleted_rows"]:
                 if idx < len(filtered_df):
-                    conn.table("price_logs").delete().eq("id", filtered_df.iloc[idx]["id"]).execute()
+                    row_id = filtered_df.iloc[idx]["id"]
+                    conn.table("price_logs").delete().eq("id", row_id).execute()
             st.success("Updated")
             st.cache_data.clear()
             st.rerun()
-    else: st.warning("No records.")
+    else: st.warning("No records found.")
 
 # ==========================================
 # PAGE: ANALYSER
@@ -303,11 +297,11 @@ elif selected == "Export":
         filtered = df[(df['date'] >= start_d) & (df['date'] <= end_d)]
         
         st.write("---")
-        st.caption(f"Previewing {len(filtered)} records")
+        st.caption(f"Preview: {len(filtered)} records found.")
         st.dataframe(filtered, use_container_width=True, hide_index=True)
         
         if not filtered.empty:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 filtered.to_excel(writer, index=False)
-            st.download_button("📥 Download Excel", data=buffer.getvalue(), file_name=f"Gmax_Report.xlsx", use_container_width=True)
+            st.download_button("📥 Download Excel", data=buffer.getvalue(), file_name="Gmax_Report.xlsx", use_container_width=True)
