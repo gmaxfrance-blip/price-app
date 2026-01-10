@@ -11,16 +11,14 @@ PINK = "#ff1774"
 DARK_BG = "#0e1117"
 CARD_BG = "#262730"
 
-# Standard layout, no aggressive sidebar hiding
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. CLEAN CSS (Only for colors & inputs, NOT layout) ---
+# --- 2. CSS STYLING ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
     
-    /* Input & Form Styling */
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
@@ -54,7 +52,7 @@ def get_logs():
         df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
-# --- 4. LOGIN ---
+# --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
     st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 2, 1])
@@ -70,18 +68,13 @@ if "role" not in st.session_state:
 # --- 5. SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.image(LOGO_URL, width=100)
-    
-    # Standard Option Menu without keys to prevent locking
     selected = option_menu(
         menu_title="Main Menu", 
         options=["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"], 
         icons=["plus", "list", "pencil", "search", "download"], 
         default_index=0,
-        styles={
-            "nav-link-selected": {"background-color": PINK},
-        }
+        styles={"nav-link-selected": {"background-color": PINK}}
     )
-    
     st.write("---")
     if st.button("Logout"):
         st.session_state.clear()
@@ -90,10 +83,12 @@ with st.sidebar:
 p_list, d_list = get_master_data()
 
 # ==========================================
-# PAGE: NEW PRICE ENTRY
+# PAGE: ENTRY
 # ==========================================
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
+    
+    # 1. Entry Form
     with st.form("entry_form", clear_on_submit=True):
         p = st.selectbox("Product", options=[""] + p_list)
         d = st.selectbox("Distributor", options=[""] + d_list)
@@ -106,58 +101,88 @@ if selected == "Entry":
                 conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "tax_rate": tx, "date": str(dt)}).execute()
                 st.success("Saved Successfully")
                 st.cache_data.clear()
+                st.rerun()
             else: st.error("Please fill all fields")
 
+    # 2. History Table (Default View)
+    st.write("---")
+    st.subheader("Previous Entries")
+    df_history = get_logs()
+    if not df_history.empty:
+        st.dataframe(df_history, use_container_width=True, hide_index=True)
+    else:
+        st.info("No entries found.")
+
 # ==========================================
-# PAGE: REGISTER (TYPE-TO-SEARCH LOGIC)
+# PAGE: REGISTER (SINGLE FIELD AUTOCOMPLETE)
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
-    # PRODUCT SECTION
+    # --- PRODUCT SECTION ---
     with c1:
-        st.write("**Product Registry**")
-        reg_p = st.text_input("Type Product Name", placeholder="Start typing to check...", key="reg_p_input")
+        st.write("**Products**")
         
-        if reg_p:
-            matches = [x for x in p_list if reg_p.lower() in x.lower()]
+        # 1. Single Input for Search & Add
+        search_p = st.text_input("Type Product Name", placeholder="Search or type new to add...", key="p_input")
+        
+        # 2. Logic: If typing, show "Dropdown" list below
+        if search_p:
+            # Filter the list based on typing
+            matches = [x for x in p_list if search_p.lower() in x.lower()]
+            
             if matches:
-                st.dataframe(pd.DataFrame(matches, columns=["Existing Matches"]), use_container_width=True, hide_index=True)
-                if reg_p in p_list:
-                    st.warning(f"'{reg_p}' is already registered.")
+                st.caption("Existing matches:")
+                # This acts as your dropdown list
+                st.dataframe(pd.DataFrame(matches, columns=["Match"]), use_container_width=True, hide_index=True)
             else:
-                st.info("New item! Click add below.")
-                
-            if st.button("Add New Product", disabled=(reg_p in p_list)):
-                conn.table("products").insert({"name": reg_p.strip().upper()}).execute()
-                st.success(f"Added: {reg_p}")
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True, hide_index=True)
+                st.caption("No matches found.")
+            
+            # 3. Add Button (Only if it doesn't strictly exist)
+            if search_p.upper() not in p_list:
+                if st.button(f"Add New: {search_p}"):
+                    conn.table("products").insert({"name": search_p.strip().upper()}).execute()
+                    st.success(f"Added {search_p}")
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.warning(f"'{search_p}' is already registered.")
 
-    # DISTRIBUTOR SECTION
+        # 4. Full list at bottom
+        st.write("---")
+        st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True, hide_index=True, height=300)
+
+    # --- DISTRIBUTOR SECTION ---
     with c2:
-        st.write("**Distributor Registry**")
-        reg_d = st.text_input("Type Distributor Name", placeholder="Start typing to check...", key="reg_d_input")
+        st.write("**Distributors**")
         
-        if reg_d:
-            matches_d = [x for x in d_list if reg_d.lower() in x.lower()]
+        # 1. Single Input for Search & Add
+        search_d = st.text_input("Type Distributor Name", placeholder="Search or type new to add...", key="d_input")
+        
+        # 2. Logic: If typing, show "Dropdown" list below
+        if search_d:
+            matches_d = [x for x in d_list if search_d.lower() in x.lower()]
+            
             if matches_d:
-                st.dataframe(pd.DataFrame(matches_d, columns=["Existing Matches"]), use_container_width=True, hide_index=True)
-                if reg_d in d_list:
-                    st.warning(f"'{reg_d}' is already registered.")
+                st.caption("Existing matches:")
+                st.dataframe(pd.DataFrame(matches_d, columns=["Match"]), use_container_width=True, hide_index=True)
             else:
-                st.info("New distributor! Click add below.")
-                
-            if st.button("Add New Distributor", disabled=(reg_d in d_list)):
-                conn.table("distributors").insert({"name": reg_d.strip().upper()}).execute()
-                st.success(f"Added: {reg_d}")
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True, hide_index=True)
+                st.caption("No matches found.")
+            
+            # 3. Add Button
+            if search_d.upper() not in d_list:
+                if st.button(f"Add New: {search_d}"):
+                    conn.table("distributors").insert({"name": search_d.strip().upper()}).execute()
+                    st.success(f"Added {search_d}")
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.warning(f"'{search_d}' is already registered.")
+
+        # 4. Full list at bottom
+        st.write("---")
+        st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True, hide_index=True, height=300)
 
 # ==========================================
 # PAGE: MANAGE
@@ -167,7 +192,7 @@ elif selected == "Manage":
     df_manage = get_logs()
     
     if not df_manage.empty:
-        st.info("Tip: Select rows and hit 'Delete' on your keyboard to mark for deletion.")
+        st.info("Edit rows directly below. Click 'Commit' to save.")
         edited_df = st.data_editor(
             df_manage,
             key="manage_editor",
@@ -184,48 +209,40 @@ elif selected == "Manage":
         
         if st.button("Commit Changes (Update/Delete)"):
             state = st.session_state["manage_editor"]
-            # Updates
             for idx, updates in state["edited_rows"].items():
-                row_id = df_manage.iloc[idx]["id"]
-                conn.table("price_logs").update(updates).eq("id", row_id).execute()
-            # Deletes
+                conn.table("price_logs").update(updates).eq("id", df_manage.iloc[idx]["id"]).execute()
             for idx in state["deleted_rows"]:
-                row_id = df_manage.iloc[idx]["id"]
-                conn.table("price_logs").delete().eq("id", row_id).execute()
-                
-            st.success("Database updated successfully!")
+                conn.table("price_logs").delete().eq("id", df_manage.iloc[idx]["id"]).execute()
+            st.success("Updated!")
             st.cache_data.clear()
             st.rerun()
     else:
-        st.warning("No records found.")
+        st.warning("No records.")
 
 # ==========================================
 # PAGE: ANALYSER
 # ==========================================
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
-    target = st.selectbox("Select Product to Analyze", [""] + p_list)
+    target = st.selectbox("Select Product", [""] + p_list)
     
     if target:
         df = get_logs()
         df_sub = df[df['product'] == target].copy()
-        
         if not df_sub.empty:
             min_price = df_sub['price'].min()
             best_sellers = df_sub[df_sub['price'] == min_price]['distributor'].unique()
-            best_sellers_str = ", ".join(best_sellers)
             
             st.markdown(f"""
-            <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK}; margin-bottom: 20px;'>
-                <p style='margin:0; font-size:14px; text-transform:uppercase; color: #888;'>Best Market Price</p>
-                <h1 style='margin:5px 0; color:{PINK} !important; font-size: 3rem;'>{min_price:.2f} €</h1>
-                <p style='margin:0; font-size:16px;'>Available at: <strong style='color:white'>{best_sellers_str}</strong></p>
+            <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK};'>
+                <p style='margin:0; color:#888;'>BEST PRICE</p>
+                <h1 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h1>
+                <p>Available at: <strong>{", ".join(best_sellers)}</strong></p>
             </div>
             """, unsafe_allow_html=True)
             
-            st.subheader(f"History: {target}")
-            df_history = df_sub.sort_values(by='date', ascending=False)
-            st.dataframe(df_history[['date', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
+            st.write("---")
+            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
 
 # ==========================================
 # PAGE: EXPORT
@@ -233,24 +250,15 @@ elif selected == "Analyser":
 elif selected == "Export":
     st.markdown("<h3 style='text-align: center;'>Excel Export</h3>", unsafe_allow_html=True)
     df = get_logs()
-    
     if not df.empty:
         c1, c2 = st.columns(2)
-        with c1: start_d = st.date_input("Start Date", date.today() - timedelta(days=30))
-        with c2: end_d = st.date_input("End Date", date.today())
+        with c1: start_d = st.date_input("Start", date.today() - timedelta(days=30))
+        with c2: end_d = st.date_input("End", date.today())
         
-        mask = (df['date'] >= start_d) & (df['date'] <= end_d)
-        filtered_df = df[mask]
-        
-        st.write(f"**Records Found:** {len(filtered_df)}")
+        filtered = df[(df['date'] >= start_d) & (df['date'] <= end_d)]
         
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            filtered_df.to_excel(writer, index=False)
+            filtered.to_excel(writer, index=False)
             
-        st.download_button(
-            label="Download Excel File",
-            data=buffer.getvalue(),
-            file_name=f"Gmax_Report_{start_d}_{end_d}.xlsx",
-            use_container_width=True
-        )
+        st.download_button("Download Excel", data=buffer.getvalue(), file_name=f"Gmax_{start_d}_{end_d}.xlsx", use_container_width=True)
