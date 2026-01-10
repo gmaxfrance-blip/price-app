@@ -32,11 +32,24 @@ st.markdown(f"""
         background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
     }}
     
-    /* Confirmation Dialog Styling */
+    /* Dialog Styling */
     div[data-testid="stDialog"] {{ background-color: {CARD_BG}; border: 1px solid {PINK}; }}
-    
+
     .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
     .logo-container img {{ width: 140px; }}
+    
+    /* Sidebar Table Stats Styling */
+    .stat-box {{
+        background-color: #1e1e1e;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 5px;
+        border-left: 3px solid {PINK};
+        font-size: 0.85rem;
+    }}
+    .stat-title {{ font-weight: bold; color: white; text-transform: uppercase; }}
+    .stat-detail {{ color: #aaa; }}
+    
     #MainMenu, footer {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -55,21 +68,21 @@ def get_logs():
         df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
-# LIVE STORAGE STATS (No Cache)
-def get_live_stats():
-    """Fetches total storage + row counts per table"""
+# LIVE STATS (Rows & Columns)
+def get_detailed_stats():
+    """Calls the Supabase SQL function to get row/col counts"""
     try:
-        # 1. Total Size
+        # 1. Table Stats (Rows, Cols)
+        response = conn.client.rpc('get_detailed_stats', {}).execute()
+        stats = response.data if response.data else []
+        
+        # 2. Total MB (Optional, keep if you want total size too)
         size_res = conn.client.rpc('get_db_size', {}).execute()
         total_mb = round(size_res.data / (1024 * 1024), 1) if size_res.data else 0.0
         
-        # 2. Table Details
-        table_res = conn.client.rpc('get_table_stats', {}).execute()
-        details = table_res.data if table_res.data else []
-        
-        return total_mb, details
+        return stats, total_mb
     except:
-        return 0.0, []
+        return [], 0.0
 
 # --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
@@ -97,25 +110,29 @@ with st.sidebar:
     
     st.write("---")
     
-    # --- LIVE STORAGE & ROW COUNTS ---
-    used_mb, table_stats = get_live_stats()
-    limit = 500 
-    pct = min(used_mb / limit, 1.0)
+    # --- LIVE TABLE STATISTICS ---
+    st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:10px;'>📦 DATABASE STATUS</p>", unsafe_allow_html=True)
     
-    st.caption("☁️ Live Storage")
-    st.progress(pct)
-    st.write(f"**{used_mb} MB** / {limit} MB")
+    table_stats, total_mb = get_detailed_stats()
     
     if table_stats:
-        with st.expander("📊 Row Counts by Table"):
-            for t in table_stats:
-                # Format: "products: 150 rows"
-                st.markdown(f"**{t['table_name']}**: {t['row_count']} rows")
+        for t in table_stats:
+            # Displays: DISTRIBUTORS: 50 Rows, 2 Cols
+            st.markdown(f"""
+            <div class='stat-box'>
+                <div class='stat-title'>{t['table_name']}</div>
+                <div class='stat-detail'>{t['total_rows']} Rows • {t['total_cols']} Columns</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.caption("Stats unavailable (Run SQL first)")
+        
+    st.caption(f"☁️ Total Storage: {total_mb} MB")
     
-    if st.button("🔄 Refresh Stats"):
+    if st.button("🔄 Refresh"):
         st.cache_data.clear()
         st.rerun()
-
+    
     st.write("---")
     if st.button("Logout"):
         st.session_state.clear()
@@ -211,51 +228,46 @@ elif selected == "Register":
                     st.rerun()
 
 # ==========================================
-# PAGE: MANAGE (DELETE CONFIRMATION DIALOG)
+# PAGE: MANAGE (DELETE ICON + POPUP)
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
     df_manage = get_logs()
     
-    # --- CONFIRMATION DIALOG FUNCTION ---
+    # --- CONFIRMATION DIALOG ---
     @st.dialog("⚠️ CONFIRM DELETION")
     def confirm_delete(row_ids):
-        st.warning(f"Are you sure you want to permanently delete {len(row_ids)} record(s)?")
-        st.markdown("**This action cannot be undone.**")
-        
+        st.warning(f"Deleting {len(row_ids)} row(s) permanently.")
         col_yes, col_no = st.columns(2)
-        if col_yes.button("✅ Yes, Delete Forever"):
+        if col_yes.button("✅ Yes, Delete"):
             for rid in row_ids:
                 conn.table("price_logs").delete().eq("id", rid).execute()
-            st.success("Deleted successfully.")
+            st.success("Deleted.")
             st.cache_data.clear()
-            time.sleep(1) # Small pause to show success
+            time.sleep(1)
             st.rerun()
-            
         if col_no.button("❌ Cancel"):
             st.rerun()
 
     if not df_manage.empty:
         # Filters
-        with st.expander("🔍 Filters", expanded=True):
+        with st.expander("🔍 Filter Options", expanded=True):
             c1, c2, c3 = st.columns(3)
             with c1: search_p = st.multiselect("Product", options=p_list)
             with c2: search_d = st.multiselect("Distributor", options=d_list)
-            with c3: date_range = st.date_input("Date Range", [])
+            with c3: date_range = st.date_input("Date", [])
         
-        # Apply Filters
         filtered_df = df_manage.copy()
         if search_p: filtered_df = filtered_df[filtered_df['product'].isin(search_p)]
         if search_d: filtered_df = filtered_df[filtered_df['distributor'].isin(search_d)]
         if len(date_range) == 2:
             filtered_df = filtered_df[(filtered_df['date'] >= date_range[0]) & (filtered_df['date'] <= date_range[1])]
             
-        # Add a "Delete?" Checkbox Column for easy selection
-        filtered_df["Delete?"] = False
+        # Add Delete Checkbox Column
+        filtered_df["Delete"] = False
         
-        st.write(f"Showing {len(filtered_df)} records")
+        st.write(f"Showing **{len(filtered_df)}** records")
         
-        # Data Editor with Delete Column
         edited_df = st.data_editor(
             filtered_df,
             key="manage_editor",
@@ -264,45 +276,41 @@ elif selected == "Manage":
             hide_index=True,
             column_config={
                 "id": None,
-                "Delete?": st.column_config.CheckboxColumn("🗑️ Delete?", help="Check to delete this row", default=False),
+                "Delete": st.column_config.CheckboxColumn("🗑️", width="small"),
                 "product": st.column_config.SelectboxColumn("Product", options=p_list, required=True),
                 "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list, required=True),
                 "tax_rate": st.column_config.SelectboxColumn("Tax", options=["5.5%", "20%", "No tax"])
             }
         )
         
-        # COMMIT LOGIC
         if st.button("💾 Save Changes"):
             state = st.session_state["manage_editor"]
             
-            # 1. Identify rows marked for deletion via Checkbox
-            # We look at the 'edited_df' (the result of the editor)
-            rows_to_delete = edited_df[edited_df["Delete?"] == True]["id"].tolist()
+            # Identify rows marked via Checkbox
+            rows_to_delete = edited_df[edited_df["Delete"] == True]["id"].tolist()
             
-            # 2. Also check standard Streamlit 'deleted_rows' (if they used the keyboard delete)
+            # Also check standard deleted_rows
             for idx in state["deleted_rows"]:
                 if idx < len(filtered_df):
                     rows_to_delete.append(filtered_df.iloc[idx]["id"])
             
-            # 3. IF DELETIONS EXIST -> TRIGGER POPUP
+            # TRIGGER POPUP IF DELETING
             if rows_to_delete:
-                confirm_delete(list(set(rows_to_delete))) # Trigger Dialog
+                confirm_delete(list(set(rows_to_delete)))
             
-            # 4. IF ONLY UPDATES (No deletions) -> Just Save
+            # OTHERWISE JUST SAVE UPDATES
             else:
                 for idx, updates in state["edited_rows"].items():
                     if idx < len(filtered_df):
-                        # Remove "Delete?" from updates if it accidentally got in
-                        if "Delete?" in updates: del updates["Delete?"]
+                        if "Delete" in updates: del updates["Delete"]
                         row_id = filtered_df.iloc[idx]["id"]
                         conn.table("price_logs").update(updates).eq("id", row_id).execute()
-                
                 st.success("Updates Saved!")
                 st.cache_data.clear()
                 time.sleep(1)
                 st.rerun()
 
-    else: st.warning("No records.")
+    else: st.warning("No records found.")
 
 # ==========================================
 # PAGE: ANALYSER
