@@ -46,6 +46,20 @@ def get_logs():
         df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
+def get_storage_mb():
+    """Calls the Supabase RPC function to get DB size in MB"""
+    try:
+        # Calls the 'get_db_size' SQL function we created
+        response = conn.client.rpc('get_db_size', {}).execute()
+        if response.data:
+            bytes_used = response.data
+            mb_used = bytes_used / (1024 * 1024)
+            return round(mb_used, 1)
+        return 0
+    except Exception:
+        # If SQL function doesn't exist yet, return 0 to prevent crash
+        return 0
+
 # --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
     st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
@@ -69,6 +83,19 @@ with st.sidebar:
         default_index=0,
         styles={"nav-link-selected": {"background-color": PINK}}
     )
+    
+    st.write("---")
+    
+    # --- STORAGE INDICATOR ---
+    # 500 MB Limit for Free Tier
+    used_mb = get_storage_mb()
+    limit_mb = 500
+    percent = min(used_mb / limit_mb, 1.0)
+    
+    st.caption("☁️ Supabase Storage (Free Tier)")
+    st.progress(percent)
+    st.write(f"**{used_mb} MB** / {limit_mb} MB used")
+    
     st.write("---")
     if st.button("Logout"):
         st.session_state.clear()
@@ -109,52 +136,31 @@ elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
-    # Helper to handle selection click
     def handle_selection(key_prefix, matches):
-        # Check if user clicked a row in the dataframe
         selection = st.session_state.get(f"{key_prefix}_selection")
         if selection and selection["selection"]["rows"]:
             idx = selection["selection"]["rows"][0]
-            # Update the text input with the selected name
             st.session_state[f"{key_prefix}_input"] = matches[idx]
 
     # --- PRODUCT COLUMN ---
     with c1:
         st.write("**Products**")
-        
-        # 1. INPUT FIELD (Captured in Session State)
         if "p_reg_input" not in st.session_state: st.session_state.p_reg_input = ""
-        
         p_val = st.text_input("Product Name", key="p_reg_input", placeholder="Type to search or add new...")
         
-        # 2. FILTER LOGIC
         matches_p = []
         if p_val:
             matches_p = [x for x in p_list if p_val.lower() in x.lower()]
-            
-            # Show "Dropdown" Table if matches exist AND text isn't an exact match yet
             if matches_p and p_val.upper() not in p_list:
                 st.caption("👇 Click below to select:")
                 df_p = pd.DataFrame(matches_p, columns=["Suggestions"])
-                
-                # INTERACTIVE TABLE (Acts as Dropdown)
-                st.dataframe(
-                    df_p, 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    on_select="rerun", 
-                    selection_mode="single-row",
-                    key="p_reg_selection"
-                )
-                # Apply selection logic
+                st.dataframe(df_p, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="p_reg_selection")
                 handle_selection("p_reg", matches_p)
 
-        # 3. ACTION BUTTONS
         if p_val:
             if p_val.upper() in p_list:
-                st.success(f"✅ '{p_val.upper()}' is already selected/registered.")
+                st.success(f"✅ '{p_val.upper()}' is already registered.")
             else:
-                # If no exact match (New Item), show Save Button
                 if st.button(f"Save New Product: {p_val}"):
                     conn.table("products").insert({"name": p_val.strip().upper()}).execute()
                     st.success(f"Saved: {p_val}")
@@ -164,35 +170,21 @@ elif selected == "Register":
     # --- DISTRIBUTOR COLUMN ---
     with c2:
         st.write("**Distributors**")
-        
-        # 1. INPUT FIELD
         if "d_reg_input" not in st.session_state: st.session_state.d_reg_input = ""
-        
         d_val = st.text_input("Distributor Name", key="d_reg_input", placeholder="Type to search or add new...")
         
-        # 2. FILTER LOGIC
         matches_d = []
         if d_val:
             matches_d = [x for x in d_list if d_val.lower() in x.lower()]
-            
             if matches_d and d_val.upper() not in d_list:
                 st.caption("👇 Click below to select:")
                 df_d = pd.DataFrame(matches_d, columns=["Suggestions"])
-                
-                st.dataframe(
-                    df_d, 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    on_select="rerun", 
-                    selection_mode="single-row",
-                    key="d_reg_selection"
-                )
+                st.dataframe(df_d, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="d_reg_selection")
                 handle_selection("d_reg", matches_d)
 
-        # 3. ACTION BUTTONS
         if d_val:
             if d_val.upper() in d_list:
-                st.success(f"✅ '{d_val.upper()}' is already selected/registered.")
+                st.success(f"✅ '{d_val.upper()}' is already registered.")
             else:
                 if st.button(f"Save New Distributor: {d_val}"):
                     conn.table("distributors").insert({"name": d_val.strip().upper()}).execute()
@@ -200,7 +192,6 @@ elif selected == "Register":
                     st.cache_data.clear()
                     st.rerun()
 
-    # Full lists at bottom
     st.write("---")
     with st.expander("View Full Registered Lists"):
         col_a, col_b = st.columns(2)
@@ -245,7 +236,6 @@ elif selected == "Manage":
         
         if st.button("Commit Changes"):
             state = st.session_state["manage_editor"]
-            # Map index back to filtered ID
             for idx, updates in state["edited_rows"].items():
                 if idx < len(filtered_df):
                     row_id = filtered_df.iloc[idx]["id"]
