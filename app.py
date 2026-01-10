@@ -14,21 +14,25 @@ CARD_BG = "#262730"
 st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 2. BRUTAL CSS (REMOVES SIDEBAR ARROW & FIXES UI) ---
+# --- 2. REFINED CSS (FIXES SIDEBAR INTERACTION) ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
     
-    /* Hide the sidebar toggle arrow button */
+    /* Hide the sidebar toggle arrow to keep UI fixed */
     button[kind="header"] {{ display: none !important; }}
-    section[data-testid="stSidebar"] {{ min-width: 250px !important; }}
+    
+    /* Ensure the sidebar container doesn't block clicks */
+    section[data-testid="stSidebar"] {{ 
+        min-width: 250px !important; 
+        z-index: 100;
+    }}
 
     .logo-container {{ display: flex; justify-content: center; padding: 10px; }}
     .logo-container img {{ max-width: 100%; height: auto; width: 120px; }}
     
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     
-    /* Input Styling */
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
         background-color: #3b3d4a !important; color: white !important; border: 1px solid #555 !important;
     }}
@@ -39,6 +43,7 @@ st.markdown(f"""
         background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
     }}
     
+    /* Hide default Streamlit elements */
     #MainMenu, footer, header {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -55,7 +60,6 @@ def get_logs():
     df = pd.DataFrame(res.data)
     if not df.empty:
         df['date'] = pd.to_datetime(df['date']).dt.date
-        if 'tax_rate' not in df.columns: df['tax_rate'] = "No tax"
     return df
 
 # --- 4. AUTHENTICATION ---
@@ -71,24 +75,35 @@ if "role" not in st.session_state:
             if "role" in st.session_state: st.rerun()
     st.stop()
 
-# --- 5. NAVIGATION ---
+# --- 5. NAVIGATION (Fixed logic) ---
 with st.sidebar:
     st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
     opts = ["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"]
-    selected = option_menu(None, opts, icons=["plus", "list", "pencil", "search", "download"], default_index=0)
+    
+    # Using a key helps Streamlit track state changes in the menu
+    selected = option_menu(
+        menu_title=None, 
+        options=opts, 
+        icons=["plus", "list", "pencil", "search", "download"], 
+        default_index=0,
+        key="main_nav_menu"
+    )
+    
+    st.write("---")
     if st.button("Logout"):
         st.session_state.clear()
         st.rerun()
 
 p_list, d_list = get_master_data()
+# Center logo on main content area
 st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
 
 # --- PAGE: ENTRY ---
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
     with st.form("entry_form", clear_on_submit=True):
-        p = st.selectbox("Search/Select Product", options=[""] + p_list)
-        d = st.selectbox("Search/Select Distributor", options=[""] + d_list)
+        p = st.selectbox("Select Product", options=[""] + p_list)
+        d = st.selectbox("Select Distributor", options=[""] + d_list)
         pr = st.number_input("Price HT (€)", min_value=0.0, step=0.01)
         tx = st.selectbox("Tax %", ["5.5%", "20%", "No tax"])
         dt = st.date_input("Date", date.today())
@@ -100,84 +115,77 @@ if selected == "Entry":
                 st.cache_data.clear()
             else: st.error("Please fill all fields")
 
-# --- PAGE: REGISTER (TYPE-TO-SEARCH LOGIC) ---
+# --- PAGE: REGISTER (FIXED DROPDOWN + INPUT) ---
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
     with c1:
         st.write("**Register Product**")
-        # DROPDOWN + INPUT LOGIC:
-        # User types to search. If they want to add new, they use the text box below.
-        existing_p = st.selectbox("Existing Products (Search here)", options=[""] + p_list, key="ex_p")
-        new_p = st.text_input("New Product Name", placeholder="Type name here if not in dropdown...", key="in_p")
+        # Search while typing logic
+        search_p = st.selectbox("Search existing...", options=[""] + p_list, key="search_p")
+        new_p = st.text_input("Type NEW product name:", value=search_p, key="input_p")
         
         if st.button("Add Product"):
-            val = new_p if new_p else existing_p
-            if val and val.strip() not in p_list:
-                conn.table("products").insert({"name": val.strip().upper()}).execute()
-                st.success(f"Added: {val}")
+            final_p = new_p.strip().upper()
+            if final_p and final_p not in p_list:
+                conn.table("products").insert({"name": final_p}).execute()
+                st.success(f"Added: {final_p}")
                 st.cache_data.clear()
                 st.rerun()
-            else: st.warning("Item already exists or empty input")
+            else: st.warning("Item already exists or empty.")
         st.dataframe(p_list, columns=["Registered Products"], use_container_width=True)
             
     with c2:
         st.write("**Register Distributor**")
-        existing_d = st.selectbox("Existing Distributors (Search here)", options=[""] + d_list, key="ex_d")
-        new_d = st.text_input("New Distributor Name", placeholder="Type name here if not in dropdown...", key="in_d")
+        search_d = st.selectbox("Search existing...", options=[""] + d_list, key="search_d")
+        new_d = st.text_input("Type NEW distributor name:", value=search_d, key="input_d")
         
         if st.button("Add Distributor"):
-            val_d = new_d if new_d else existing_d
-            if val_d and val_d.strip() not in d_list:
-                conn.table("distributors").insert({"name": val_d.strip().upper()}).execute()
-                st.success(f"Added: {val_d}")
+            final_d = new_d.strip().upper()
+            if final_d and final_d not in d_list:
+                conn.table("distributors").insert({"name": final_d}).execute()
+                st.success(f"Added: {final_d}")
                 st.cache_data.clear()
                 st.rerun()
-            else: st.warning("Item already exists or empty input")
+            else: st.warning("Item already exists or empty.")
         st.dataframe(d_list, columns=["Registered Distributors"], use_container_width=True)
 
-# --- PAGE: MANAGE (FIXED VISIBILITY) ---
+# --- PAGE: MANAGE ---
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
     df_manage = get_logs()
     
     if not df_manage.empty:
-        st.write("Edit rows directly in the table below and click **Commit Changes**.")
-        # We use a copy for the editor
-        df_editor = df_manage.copy()
-        
+        st.info("Edit cells below and click 'Commit Changes'")
         edited_df = st.data_editor(
-            df_editor,
-            key="main_editor",
+            df_manage,
+            key="db_editor",
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_config={
-                "id": None, # Hide ID
-                "product": st.column_config.SelectboxColumn("Product", options=p_list, required=True),
-                "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list, required=True),
-                "tax_rate": st.column_config.SelectboxColumn("Tax %", options=["5.5%", "20%", "No tax"])
+                "id": None,
+                "product": st.column_config.SelectboxColumn("Product", options=p_list),
+                "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list),
+                "tax_rate": st.column_config.SelectboxColumn("Tax", options=["5.5%", "20%", "No tax"])
             }
         )
         
         if st.button("Commit Changes"):
-            # Update Logic for edited rows
-            state = st.session_state["main_editor"]
+            state = st.session_state["db_editor"]
             # Handle Edits
             for idx, updates in state["edited_rows"].items():
-                row_id = df_manage.iloc[idx]["id"]
-                conn.table("price_logs").update(updates).eq("id", row_id).execute()
-            # Handle Deletions
+                conn.table("price_logs").update(updates).eq("id", df_manage.iloc[idx]["id"]).execute()
+            # Handle Deletes
             for idx in state["deleted_rows"]:
-                row_id = df_manage.iloc[idx]["id"]
-                conn.table("price_logs").delete().eq("id", row_id).execute()
+                conn.table("price_logs").delete().eq("id", df_manage.iloc[idx]["id"]).execute()
                 
-            st.success("Database Updated Successfully")
+            st.success("Updated")
             st.cache_data.clear()
             st.rerun()
     else:
-        st.info("No data found in database.")
+        st.warning("No data found.")
 
 # --- PAGE: ANALYSER ---
 elif selected == "Analyser":
@@ -200,8 +208,7 @@ elif selected == "Analyser":
             """, unsafe_allow_html=True)
             
             st.write("---")
-            st.write(f"**Full History: {target}**")
-            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']], use_container_width=True, hide_index=True)
+            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
 
 # --- PAGE: EXPORT ---
 elif selected == "Export":
@@ -212,15 +219,15 @@ elif selected == "Export":
         with c1: start_d = st.date_input("From", date.today() - timedelta(days=30))
         with c2: end_d = st.date_input("To", date.today())
         
-        filtered_df = df[(df['date'] >= start_d) & (df['date'] <= end_d)]
+        filtered = df[(df['date'] >= start_d) & (df['date'] <= end_d)]
         
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            filtered_df.to_excel(writer, index=False)
+            filtered.to_excel(writer, index=False)
         
         st.download_button(
-            label=f"Download Report ({len(filtered_df)} records)",
+            label="Download Excel Report",
             data=buffer.getvalue(),
-            file_name=f"Gmax_Report_{start_d}_{end_d}.xlsx",
+            file_name=f"Gmax_Export.xlsx",
             use_container_width=True
         )
