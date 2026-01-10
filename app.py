@@ -88,7 +88,6 @@ p_list, d_list = get_master_data()
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
     
-    # 1. Entry Form
     with st.form("entry_form", clear_on_submit=True):
         p = st.selectbox("Product", options=[""] + p_list)
         d = st.selectbox("Distributor", options=[""] + d_list)
@@ -104,7 +103,6 @@ if selected == "Entry":
                 st.rerun()
             else: st.error("Please fill all fields")
 
-    # 2. History Table (Default View)
     st.write("---")
     st.subheader("Previous Entries")
     df_history = get_logs()
@@ -114,75 +112,78 @@ if selected == "Entry":
         st.info("No entries found.")
 
 # ==========================================
-# PAGE: REGISTER (SINGLE FIELD AUTOCOMPLETE)
+# PAGE: REGISTER (SINGLE FIELD LOGIC)
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
-    # --- PRODUCT SECTION ---
+    # --- PRODUCT LOGIC ---
     with c1:
-        st.write("**Products**")
+        st.write("**Product Name**")
         
-        # 1. Single Input for Search & Add
-        search_p = st.text_input("Type Product Name", placeholder="Search or type new to add...", key="p_input")
+        # 1. SINGLE INPUT FIELD (User types here)
+        p_input = st.text_input("Type Product Name", placeholder="Start typing...", key="p_in", label_visibility="collapsed")
         
-        # 2. Logic: If typing, show "Dropdown" list below
-        if search_p:
-            # Filter the list based on typing
-            matches = [x for x in p_list if search_p.lower() in x.lower()]
+        # 2. FILTER & SHOW DROPDOWN (Visual Feedback)
+        if p_input:
+            # Filter logic: Find matches
+            matches = [x for x in p_list if p_input.lower() in x.lower()]
             
             if matches:
-                st.caption("Existing matches:")
-                # This acts as your dropdown list
-                st.dataframe(pd.DataFrame(matches, columns=["Match"]), use_container_width=True, hide_index=True)
+                # Show matches essentially as a "list"
+                st.caption(f"Found {len(matches)} matches:")
+                st.dataframe(pd.DataFrame(matches, columns=["Suggested Products"]), use_container_width=True, hide_index=True)
+                
+                # If exact match exists, block add
+                if p_input.upper() in p_list:
+                    st.success(f"✅ '{p_input.upper()}' is already registered.")
+                else:
+                    # Allow add if text is unique
+                    if st.button(f"➕ Register New: '{p_input.upper()}'"):
+                        conn.table("products").insert({"name": p_input.strip().upper()}).execute()
+                        st.success("Registered!")
+                        st.cache_data.clear()
+                        st.rerun()
             else:
-                st.caption("No matches found.")
-            
-            # 3. Add Button (Only if it doesn't strictly exist)
-            if search_p.upper() not in p_list:
-                if st.button(f"Add New: {search_p}"):
-                    conn.table("products").insert({"name": search_p.strip().upper()}).execute()
-                    st.success(f"Added {search_p}")
+                # No matches? Allow add immediately
+                st.info("No matches found. This is a new item.")
+                if st.button(f"➕ Register New: '{p_input.upper()}'"):
+                    conn.table("products").insert({"name": p_input.strip().upper()}).execute()
+                    st.success("Registered!")
                     st.cache_data.clear()
                     st.rerun()
-            else:
-                st.warning(f"'{search_p}' is already registered.")
 
-        # 4. Full list at bottom
-        st.write("---")
-        st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True, hide_index=True, height=300)
-
-    # --- DISTRIBUTOR SECTION ---
+    # --- DISTRIBUTOR LOGIC ---
     with c2:
-        st.write("**Distributors**")
+        st.write("**Distributor Name**")
         
-        # 1. Single Input for Search & Add
-        search_d = st.text_input("Type Distributor Name", placeholder="Search or type new to add...", key="d_input")
+        # 1. SINGLE INPUT FIELD
+        d_input = st.text_input("Type Distributor Name", placeholder="Start typing...", key="d_in", label_visibility="collapsed")
         
-        # 2. Logic: If typing, show "Dropdown" list below
-        if search_d:
-            matches_d = [x for x in d_list if search_d.lower() in x.lower()]
+        # 2. FILTER & SHOW DROPDOWN
+        if d_input:
+            matches_d = [x for x in d_list if d_input.lower() in x.lower()]
             
             if matches_d:
-                st.caption("Existing matches:")
-                st.dataframe(pd.DataFrame(matches_d, columns=["Match"]), use_container_width=True, hide_index=True)
+                st.caption(f"Found {len(matches_d)} matches:")
+                st.dataframe(pd.DataFrame(matches_d, columns=["Suggested Distributors"]), use_container_width=True, hide_index=True)
+                
+                if d_input.upper() in d_list:
+                    st.success(f"✅ '{d_input.upper()}' is already registered.")
+                else:
+                    if st.button(f"➕ Register New: '{d_input.upper()}'"):
+                        conn.table("distributors").insert({"name": d_input.strip().upper()}).execute()
+                        st.success("Registered!")
+                        st.cache_data.clear()
+                        st.rerun()
             else:
-                st.caption("No matches found.")
-            
-            # 3. Add Button
-            if search_d.upper() not in d_list:
-                if st.button(f"Add New: {search_d}"):
-                    conn.table("distributors").insert({"name": search_d.strip().upper()}).execute()
-                    st.success(f"Added {search_d}")
+                st.info("No matches found. This is a new item.")
+                if st.button(f"➕ Register New: '{d_input.upper()}'"):
+                    conn.table("distributors").insert({"name": d_input.strip().upper()}).execute()
+                    st.success("Registered!")
                     st.cache_data.clear()
                     st.rerun()
-            else:
-                st.warning(f"'{search_d}' is already registered.")
-
-        # 4. Full list at bottom
-        st.write("---")
-        st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True, hide_index=True, height=300)
 
 # ==========================================
 # PAGE: MANAGE
