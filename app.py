@@ -3,7 +3,7 @@ from st_supabase_connection import SupabaseConnection
 from streamlit_option_menu import option_menu
 import pandas as pd
 from datetime import date, timedelta
-import io 
+import io
 
 # --- 1. CONFIGURATION ---
 LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a423573672203bc38f5fbcf5f5a56ac18380ebb3/dp%20logo.png"
@@ -21,7 +21,7 @@ st.markdown(f"""
     
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     
-    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input {{
+    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input, .stMultiSelect div {{
         background-color: #3b3d4a !important; color: white !important; border: 1px solid #555 !important;
     }}
     
@@ -112,41 +112,30 @@ if selected == "Entry":
         st.info("No entries found.")
 
 # ==========================================
-# PAGE: REGISTER (SINGLE FIELD LOGIC)
+# PAGE: REGISTER
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
-    # --- PRODUCT LOGIC ---
     with c1:
         st.write("**Product Name**")
-        
-        # 1. SINGLE INPUT FIELD (User types here)
         p_input = st.text_input("Type Product Name", placeholder="Start typing...", key="p_in", label_visibility="collapsed")
         
-        # 2. FILTER & SHOW DROPDOWN (Visual Feedback)
         if p_input:
-            # Filter logic: Find matches
             matches = [x for x in p_list if p_input.lower() in x.lower()]
-            
             if matches:
-                # Show matches essentially as a "list"
                 st.caption(f"Found {len(matches)} matches:")
                 st.dataframe(pd.DataFrame(matches, columns=["Suggested Products"]), use_container_width=True, hide_index=True)
-                
-                # If exact match exists, block add
                 if p_input.upper() in p_list:
                     st.success(f"✅ '{p_input.upper()}' is already registered.")
                 else:
-                    # Allow add if text is unique
                     if st.button(f"➕ Register New: '{p_input.upper()}'"):
                         conn.table("products").insert({"name": p_input.strip().upper()}).execute()
                         st.success("Registered!")
                         st.cache_data.clear()
                         st.rerun()
             else:
-                # No matches? Allow add immediately
                 st.info("No matches found. This is a new item.")
                 if st.button(f"➕ Register New: '{p_input.upper()}'"):
                     conn.table("products").insert({"name": p_input.strip().upper()}).execute()
@@ -154,21 +143,15 @@ elif selected == "Register":
                     st.cache_data.clear()
                     st.rerun()
 
-    # --- DISTRIBUTOR LOGIC ---
     with c2:
         st.write("**Distributor Name**")
-        
-        # 1. SINGLE INPUT FIELD
         d_input = st.text_input("Type Distributor Name", placeholder="Start typing...", key="d_in", label_visibility="collapsed")
         
-        # 2. FILTER & SHOW DROPDOWN
         if d_input:
             matches_d = [x for x in d_list if d_input.lower() in x.lower()]
-            
             if matches_d:
                 st.caption(f"Found {len(matches_d)} matches:")
                 st.dataframe(pd.DataFrame(matches_d, columns=["Suggested Distributors"]), use_container_width=True, hide_index=True)
-                
                 if d_input.upper() in d_list:
                     st.success(f"✅ '{d_input.upper()}' is already registered.")
                 else:
@@ -186,16 +169,39 @@ elif selected == "Register":
                     st.rerun()
 
 # ==========================================
-# PAGE: MANAGE
+# PAGE: MANAGE (SEARCH + FILTER ADDED)
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
     df_manage = get_logs()
     
     if not df_manage.empty:
-        st.info("Edit rows directly below. Click 'Commit' to save.")
+        # --- FILTERS ---
+        with st.expander("🔍 Search & Filters", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                search_p = st.multiselect("Filter by Product", options=p_list)
+            with col2:
+                search_d = st.multiselect("Filter by Distributor", options=d_list)
+            with col3:
+                date_range = st.date_input("Filter by Date Range", [])
+        
+        # --- APPLY FILTER LOGIC ---
+        filtered_df = df_manage.copy()
+        
+        if search_p:
+            filtered_df = filtered_df[filtered_df['product'].isin(search_p)]
+        if search_d:
+            filtered_df = filtered_df[filtered_df['distributor'].isin(search_d)]
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            filtered_df = filtered_df[(filtered_df['date'] >= start_date) & (filtered_df['date'] <= end_date)]
+            
+        st.write(f"Showing **{len(filtered_df)}** records matching criteria.")
+        
+        # --- EDITOR ---
         edited_df = st.data_editor(
-            df_manage,
+            filtered_df,
             key="manage_editor",
             num_rows="dynamic",
             use_container_width=True,
@@ -210,15 +216,23 @@ elif selected == "Manage":
         
         if st.button("Commit Changes (Update/Delete)"):
             state = st.session_state["manage_editor"]
+            # To handle edits on filtered data, we map back via ID
             for idx, updates in state["edited_rows"].items():
-                conn.table("price_logs").update(updates).eq("id", df_manage.iloc[idx]["id"]).execute()
+                # We must find the correct ID from the FILTERED dataframe using the index
+                if idx < len(filtered_df):
+                    row_id = filtered_df.iloc[idx]["id"]
+                    conn.table("price_logs").update(updates).eq("id", row_id).execute()
+            
             for idx in state["deleted_rows"]:
-                conn.table("price_logs").delete().eq("id", df_manage.iloc[idx]["id"]).execute()
-            st.success("Updated!")
+                if idx < len(filtered_df):
+                    row_id = filtered_df.iloc[idx]["id"]
+                    conn.table("price_logs").delete().eq("id", row_id).execute()
+                    
+            st.success("Updated Successfully!")
             st.cache_data.clear()
             st.rerun()
     else:
-        st.warning("No records.")
+        st.warning("No records found in database.")
 
 # ==========================================
 # PAGE: ANALYSER
@@ -246,20 +260,38 @@ elif selected == "Analyser":
             st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: EXPORT
+# PAGE: EXPORT (AUTO VIEW TABLE + DOWNLOAD)
 # ==========================================
 elif selected == "Export":
     st.markdown("<h3 style='text-align: center;'>Excel Export</h3>", unsafe_allow_html=True)
     df = get_logs()
     if not df.empty:
+        # 1. Date Filter Controls
         c1, c2 = st.columns(2)
-        with c1: start_d = st.date_input("Start", date.today() - timedelta(days=30))
-        with c2: end_d = st.date_input("End", date.today())
+        with c1: start_d = st.date_input("Start Date", date.today() - timedelta(days=30))
+        with c2: end_d = st.date_input("End Date", date.today())
         
+        # 2. Logic: Filter Data
         filtered = df[(df['date'] >= start_d) & (df['date'] <= end_d)]
         
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            filtered.to_excel(writer, index=False)
+        # 3. View Automatically (Table Display)
+        st.write("---")
+        st.subheader("Preview Data to Download")
+        st.caption(f"Found {len(filtered)} records between {start_d} and {end_d}")
+        
+        if not filtered.empty:
+            st.dataframe(filtered, use_container_width=True, hide_index=True)
             
-        st.download_button("Download Excel", data=buffer.getvalue(), file_name=f"Gmax_{start_d}_{end_d}.xlsx", use_container_width=True)
+            # 4. Download Button (Appears below table)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                filtered.to_excel(writer, index=False)
+                
+            st.download_button(
+                label="📥 Download This Table (.xlsx)", 
+                data=buffer.getvalue(), 
+                file_name=f"Gmax_{start_d}_{end_d}.xlsx", 
+                use_container_width=True
+            )
+        else:
+            st.warning("No data found in this date range.")
