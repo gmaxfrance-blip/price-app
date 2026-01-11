@@ -4,7 +4,6 @@ from streamlit_option_menu import option_menu
 import pandas as pd
 from datetime import date, timedelta
 import io 
-import time
 
 # --- 1. CONFIGURATION ---
 LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a423573672203bc38f5fbcf5f5a56ac18380ebb3/dp%20logo.png"
@@ -19,6 +18,7 @@ conn = st.connection("supabase", type=SupabaseConnection)
 st.markdown(f"""
     <style>
     .stApp {{ background-color: {DARK_BG}; }}
+    
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     
     .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input, .stMultiSelect div {{
@@ -27,28 +27,13 @@ st.markdown(f"""
     
     h1, h2, h3, h4, p, label {{ color: #ffffff !important; font-family: 'Arial', sans-serif; }}
     
-    /* Buttons */
     div.stButton > button {{ 
         background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
     }}
     
-    /* Confirmation Dialog Styling */
-    div[data-testid="stDialog"] {{ background-color: {CARD_BG}; border: 1px solid {PINK}; }}
-    
-    /* Sidebar Stats */
-    .stat-box {{
-        background-color: #1e1e1e;
-        padding: 8px;
-        border-radius: 5px;
-        margin-bottom: 5px;
-        border-left: 3px solid {PINK};
-        font-size: 0.8rem;
-    }}
-    .stat-title {{ font-weight: bold; color: white; text-transform: uppercase; }}
-    .stat-detail {{ color: #aaa; }}
-
     .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
     .logo-container img {{ width: 140px; }}
+    
     #MainMenu, footer {{visibility: hidden;}}
     </style>
     """, unsafe_allow_html=True)
@@ -67,21 +52,16 @@ def get_logs():
         df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
-# LIVE STORAGE STATS (No Cache)
-def get_live_stats():
-    """Fetches total storage + row counts per table"""
+# LIVE STORAGE CHECK (No Cache)
+def get_live_storage_mb():
     try:
-        # 1. Total Size
-        size_res = conn.client.rpc('get_db_size', {}).execute()
-        total_mb = round(size_res.data / (1024 * 1024), 1) if size_res.data else 0.0
-        
-        # 2. Table Details (Using get_detailed_stats for Rows + Columns)
-        table_res = conn.client.rpc('get_detailed_stats', {}).execute()
-        details = table_res.data if table_res.data else []
-        
-        return total_mb, details
+        # Requires 'get_db_size' RPC function in Supabase
+        response = conn.client.rpc('get_db_size', {}).execute()
+        if response.data:
+            return round(response.data / (1024 * 1024), 1)
+        return 0.0
     except:
-        return 0.0, []
+        return 0.0
 
 # --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
@@ -109,27 +89,18 @@ with st.sidebar:
     
     st.write("---")
     
-    # --- LIVE STORAGE & ROW COUNTS ---
-    st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:10px;'>📦 DATABASE STATUS</p>", unsafe_allow_html=True)
-    used_mb, table_stats = get_live_stats()
-    limit = 500 
+    # LIVE STORAGE BAR
+    used_mb = get_live_storage_mb()
+    limit = 500 # Free Tier Limit
     pct = min(used_mb / limit, 1.0)
     
-    if table_stats:
-        for t in table_stats:
-            st.markdown(f"""
-            <div class='stat-box'>
-                <div class='stat-title'>{t['table_name']}</div>
-                <div class='stat-detail'>{t['total_rows']} Rows • {t['total_cols']} Cols</div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    st.caption(f"☁️ Total Storage: {used_mb} MB")
-    
-    if st.button("🔄 Refresh Stats"):
+    st.caption("☁️ Storage Usage")
+    st.progress(pct)
+    st.write(f"**{used_mb} MB** / {limit} MB")
+    if st.button("🔄 Refresh"):
         st.cache_data.clear()
         st.rerun()
-
+    
     st.write("---")
     if st.button("Logout"):
         st.session_state.clear()
@@ -164,14 +135,13 @@ if selected == "Entry":
         st.dataframe(df_history, use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: REGISTER (SELECTABLE TABLE)
+# PAGE: REGISTER (TABLE SELECT + TEXT INPUT)
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
-    # 
-    # Helper to auto-fill input when table row is clicked
+    # Selection Handler
     def handle_click(key_prefix, matches):
         sel = st.session_state.get(f"{key_prefix}_selection")
         if sel and sel["selection"]["rows"]:
@@ -182,19 +152,31 @@ elif selected == "Register":
     with c1:
         st.write("**Products**")
         if "p_reg_input" not in st.session_state: st.session_state.p_reg_input = ""
+        
+        # 1. Input Field
         p_val = st.text_input("Product Name", key="p_reg_input", placeholder="Type to search or add new...")
         
+        # 2. Live Dropdown Table
         matches_p = []
         if p_val:
             matches_p = [x for x in p_list if p_val.lower() in x.lower()]
+            # Show table if matches exist AND it's not a perfect match yet
             if matches_p and p_val.upper() not in p_list:
-                st.caption("👇 Click to select:")
-                st.dataframe(pd.DataFrame(matches_p, columns=["Suggestions"]), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="p_reg_selection")
+                st.caption("👇 Click below to select:")
+                st.dataframe(
+                    pd.DataFrame(matches_p, columns=["Suggestions"]), 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    on_select="rerun", 
+                    selection_mode="single-row", 
+                    key="p_reg_selection"
+                )
                 handle_click("p_reg", matches_p)
 
+        # 3. Save Button (For New Items)
         if p_val:
             if p_val.upper() in p_list:
-                st.success(f"✅ Registered")
+                st.success(f"✅ '{p_val.upper()}' is already registered.")
             else:
                 if st.button(f"Save New: {p_val}"):
                     conn.table("products").insert({"name": p_val.strip().upper()}).execute()
@@ -206,19 +188,27 @@ elif selected == "Register":
     with c2:
         st.write("**Distributors**")
         if "d_reg_input" not in st.session_state: st.session_state.d_reg_input = ""
+        
         d_val = st.text_input("Distributor Name", key="d_reg_input", placeholder="Type to search or add new...")
         
         matches_d = []
         if d_val:
             matches_d = [x for x in d_list if d_val.lower() in x.lower()]
             if matches_d and d_val.upper() not in d_list:
-                st.caption("👇 Click to select:")
-                st.dataframe(pd.DataFrame(matches_d, columns=["Suggestions"]), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="d_reg_selection")
+                st.caption("👇 Click below to select:")
+                st.dataframe(
+                    pd.DataFrame(matches_d, columns=["Suggestions"]), 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    on_select="rerun", 
+                    selection_mode="single-row", 
+                    key="d_reg_selection"
+                )
                 handle_click("d_reg", matches_d)
 
         if d_val:
             if d_val.upper() in d_list:
-                st.success(f"✅ Registered")
+                st.success(f"✅ '{d_val.upper()}' is already registered.")
             else:
                 if st.button(f"Save New: {d_val}"):
                     conn.table("distributors").insert({"name": d_val.strip().upper()}).execute()
@@ -226,52 +216,35 @@ elif selected == "Register":
                     st.cache_data.clear()
                     st.rerun()
 
+    # Full List at Bottom
+    st.write("---")
+    with st.expander("View Full Registered Lists"):
+        ca, cb = st.columns(2)
+        with ca: st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True)
+        with cb: st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True)
+
 # ==========================================
-# PAGE: MANAGE (DELETE CONFIRMATION DIALOG)
+# PAGE: MANAGE
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
     df_manage = get_logs()
     
-    # --- CONFIRMATION DIALOG FUNCTION ---
-    @st.dialog("⚠️ CONFIRM DELETION")
-    def confirm_delete(row_ids):
-        st.warning(f"Are you sure you want to permanently delete {len(row_ids)} record(s)?")
-        st.markdown("**This action cannot be undone.**")
-        
-        col_yes, col_no = st.columns(2)
-        if col_yes.button("✅ Yes, Delete Forever"):
-            for rid in row_ids:
-                conn.table("price_logs").delete().eq("id", rid).execute()
-            st.success("Deleted successfully.")
-            st.cache_data.clear()
-            time.sleep(1) # Small pause to show success
-            st.rerun()
-            
-        if col_no.button("❌ Cancel"):
-            st.rerun()
-
     if not df_manage.empty:
-        # Filters
-        with st.expander("🔍 Filters", expanded=True):
-            c1, c2, c3 = st.columns(3)
-            with c1: search_p = st.multiselect("Product", options=p_list)
-            with c2: search_d = st.multiselect("Distributor", options=d_list)
-            with c3: date_range = st.date_input("Date Range", [])
+        with st.expander("🔍 Filter Options", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1: search_p = st.multiselect("Filter Product", options=p_list)
+            with col2: search_d = st.multiselect("Filter Distributor", options=d_list)
+            with col3: date_range = st.date_input("Filter Date", [])
         
-        # Apply Filters
         filtered_df = df_manage.copy()
         if search_p: filtered_df = filtered_df[filtered_df['product'].isin(search_p)]
         if search_d: filtered_df = filtered_df[filtered_df['distributor'].isin(search_d)]
         if len(date_range) == 2:
             filtered_df = filtered_df[(filtered_df['date'] >= date_range[0]) & (filtered_df['date'] <= date_range[1])]
             
-        # Add a "Delete?" Checkbox Column for easy selection
-        filtered_df["Delete?"] = False
+        st.write(f"Showing **{len(filtered_df)}** records")
         
-        st.write(f"Showing {len(filtered_df)} records")
-        
-        # Data Editor with Delete Column
         edited_df = st.data_editor(
             filtered_df,
             key="manage_editor",
@@ -280,44 +253,27 @@ elif selected == "Manage":
             hide_index=True,
             column_config={
                 "id": None,
-                "Delete?": st.column_config.CheckboxColumn("🗑️ Delete?", help="Check to delete this row", default=False),
                 "product": st.column_config.SelectboxColumn("Product", options=p_list, required=True),
                 "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list, required=True),
                 "tax_rate": st.column_config.SelectboxColumn("Tax", options=["5.5%", "20%", "No tax"])
             }
         )
         
-        # COMMIT LOGIC
-        if st.button("💾 Save Changes"):
+        if st.button("Commit Changes"):
             state = st.session_state["manage_editor"]
-            
-            # 1. Identify rows marked for deletion via Checkbox
-            rows_to_delete = edited_df[edited_df["Delete?"] == True]["id"].tolist()
-            
-            # 2. Also check standard Streamlit 'deleted_rows' (if they used the keyboard delete)
+            # Map edits back to original IDs
+            for idx, updates in state["edited_rows"].items():
+                if idx < len(filtered_df):
+                    row_id = filtered_df.iloc[idx]["id"]
+                    conn.table("price_logs").update(updates).eq("id", row_id).execute()
             for idx in state["deleted_rows"]:
                 if idx < len(filtered_df):
-                    rows_to_delete.append(filtered_df.iloc[idx]["id"])
-            
-            # 3. IF DELETIONS EXIST -> TRIGGER POPUP
-            if rows_to_delete:
-                confirm_delete(list(set(rows_to_delete))) # Trigger Dialog
-            
-            # 4. IF ONLY UPDATES (No deletions) -> Just Save
-            else:
-                for idx, updates in state["edited_rows"].items():
-                    if idx < len(filtered_df):
-                        # Remove "Delete?" from updates if it accidentally got in
-                        if "Delete?" in updates: del updates["Delete?"]
-                        row_id = filtered_df.iloc[idx]["id"]
-                        conn.table("price_logs").update(updates).eq("id", row_id).execute()
-                
-                st.success("Updates Saved!")
-                st.cache_data.clear()
-                time.sleep(1)
-                st.rerun()
-
-    else: st.warning("No records.")
+                    row_id = filtered_df.iloc[idx]["id"]
+                    conn.table("price_logs").delete().eq("id", row_id).execute()
+            st.success("Updated")
+            st.cache_data.clear()
+            st.rerun()
+    else: st.warning("No records found.")
 
 # ==========================================
 # PAGE: ANALYSER
