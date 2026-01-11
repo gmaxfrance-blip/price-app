@@ -35,6 +35,18 @@ st.markdown(f"""
     /* Confirmation Dialog Styling */
     div[data-testid="stDialog"] {{ background-color: {CARD_BG}; border: 1px solid {PINK}; }}
     
+    /* Sidebar Stats */
+    .stat-box {{
+        background-color: #1e1e1e;
+        padding: 8px;
+        border-radius: 5px;
+        margin-bottom: 5px;
+        border-left: 3px solid {PINK};
+        font-size: 0.8rem;
+    }}
+    .stat-title {{ font-weight: bold; color: white; text-transform: uppercase; }}
+    .stat-detail {{ color: #aaa; }}
+
     .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
     .logo-container img {{ width: 140px; }}
     #MainMenu, footer {{visibility: hidden;}}
@@ -63,8 +75,8 @@ def get_live_stats():
         size_res = conn.client.rpc('get_db_size', {}).execute()
         total_mb = round(size_res.data / (1024 * 1024), 1) if size_res.data else 0.0
         
-        # 2. Table Details
-        table_res = conn.client.rpc('get_table_stats', {}).execute()
+        # 2. Table Details (Using get_detailed_stats for Rows + Columns)
+        table_res = conn.client.rpc('get_detailed_stats', {}).execute()
         details = table_res.data if table_res.data else []
         
         return total_mb, details
@@ -98,19 +110,21 @@ with st.sidebar:
     st.write("---")
     
     # --- LIVE STORAGE & ROW COUNTS ---
+    st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:10px;'>📦 DATABASE STATUS</p>", unsafe_allow_html=True)
     used_mb, table_stats = get_live_stats()
     limit = 500 
     pct = min(used_mb / limit, 1.0)
     
-    st.caption("☁️ Live Storage")
-    st.progress(pct)
-    st.write(f"**{used_mb} MB** / {limit} MB")
-    
     if table_stats:
-        with st.expander("📊 Row Counts by Table"):
-            for t in table_stats:
-                # Format: "products: 150 rows"
-                st.markdown(f"**{t['table_name']}**: {t['row_count']} rows")
+        for t in table_stats:
+            st.markdown(f"""
+            <div class='stat-box'>
+                <div class='stat-title'>{t['table_name']}</div>
+                <div class='stat-detail'>{t['total_rows']} Rows • {t['total_cols']} Cols</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.caption(f"☁️ Total Storage: {used_mb} MB")
     
     if st.button("🔄 Refresh Stats"):
         st.cache_data.clear()
@@ -156,6 +170,8 @@ elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
+    # 
+    # Helper to auto-fill input when table row is clicked
     def handle_click(key_prefix, matches):
         sel = st.session_state.get(f"{key_prefix}_selection")
         if sel and sel["selection"]["rows"]:
@@ -276,7 +292,6 @@ elif selected == "Manage":
             state = st.session_state["manage_editor"]
             
             # 1. Identify rows marked for deletion via Checkbox
-            # We look at the 'edited_df' (the result of the editor)
             rows_to_delete = edited_df[edited_df["Delete?"] == True]["id"].tolist()
             
             # 2. Also check standard Streamlit 'deleted_rows' (if they used the keyboard delete)
