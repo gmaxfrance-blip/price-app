@@ -22,7 +22,7 @@ st.markdown(f"""
     
     div[data-testid="stForm"] {{ background-color: {CARD_BG}; padding: 1.5rem; border-radius: 8px; border: 1px solid #333; }}
     
-    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input, .stMultiSelect div {{
+    .stSelectbox div, .stNumberInput input, .stDateInput input, .stTextInput input, .stMultiSelect div, .stTextArea textarea {{
         background-color: #3b3d4a !important; color: white !important; border: 1px solid #555 !important;
     }}
     
@@ -32,6 +32,17 @@ st.markdown(f"""
         background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
     }}
     
+    /* Tabs Styling */
+    button[data-baseweb="tab"] {{
+        background-color: transparent !important;
+        color: white !important;
+        font-weight: bold;
+    }}
+    button[data-baseweb="tab"][aria-selected="true"] {{
+        background-color: {PINK} !important;
+        border-radius: 5px;
+    }}
+
     /* CENTER SIDEBAR LOGO */
     [data-testid="stSidebar"] img {{
         display: block;
@@ -60,10 +71,9 @@ def get_logs():
         df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
-# LIVE STORAGE CHECK (No Cache)
+# LIVE STORAGE CHECK
 def get_live_storage_mb():
     try:
-        # Requires 'get_db_size' RPC function in Supabase
         response = conn.client.rpc('get_db_size', {}).execute()
         if response.data:
             return round(response.data / (1024 * 1024), 1)
@@ -99,7 +109,7 @@ with st.sidebar:
     
     # LIVE STORAGE BAR
     used_mb = get_live_storage_mb()
-    limit = 500 # Free Tier Limit
+    limit = 500
     pct = min(used_mb / limit, 1.0)
     
     st.caption("☁️ Storage Usage")
@@ -117,24 +127,41 @@ with st.sidebar:
 p_list, d_list = get_master_data()
 
 # ==========================================
-# PAGE: ENTRY
+# PAGE: ENTRY (Added Qty & Comment)
 # ==========================================
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
     with st.form("entry_form", clear_on_submit=True):
-        p = st.selectbox("Product", options=[""] + p_list)
-        d = st.selectbox("Distributor", options=[""] + d_list)
-        pr = st.number_input("Price HT (€)", min_value=0.0, step=0.01)
-        tx = st.selectbox("Tax %", ["5.5%", "20%", "No tax"])
+        col_a, col_b = st.columns(2)
+        with col_a:
+            p = st.selectbox("Product", options=[""] + p_list)
+            pr = st.number_input("Price HT (€)", min_value=0.0, step=0.01)
+            # NEW: Quantity Column 1
+            qty = st.number_input("Quantity", min_value=1, step=1, value=1)
+            
+        with col_b:
+            d = st.selectbox("Distributor", options=[""] + d_list)
+            tx = st.selectbox("Tax %", ["5.5%", "20%", "No tax"])
+            # NEW: Comment Column 2
+            cm = st.text_input("Comment (Optional)", placeholder="e.g. Broken box, promo...")
+            
         dt = st.date_input("Date", date.today())
         
         if st.form_submit_button("Submit Entry"):
-            if p and d and pr > 0:
-                conn.table("price_logs").insert({"product": p, "distributor": d, "price": pr, "tax_rate": tx, "date": str(dt)}).execute()
+            if p and d and pr > 0 and qty > 0:
+                conn.table("price_logs").insert({
+                    "product": p, 
+                    "distributor": d, 
+                    "price": pr, 
+                    "tax_rate": tx, 
+                    "date": str(dt),
+                    "quantity": qty,   # NEW
+                    "comment": cm      # NEW
+                }).execute()
                 st.success("Saved Successfully")
                 st.cache_data.clear()
                 st.rerun()
-            else: st.error("Please fill all fields")
+            else: st.error("Please fill all mandatory fields (Product, Distributor, Price, Qty)")
 
     st.write("---")
     st.subheader("Previous Entries")
@@ -143,7 +170,7 @@ if selected == "Entry":
         st.dataframe(df_history, use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: REGISTER (TABLE SELECT + TEXT INPUT)
+# PAGE: REGISTER (Unchanged)
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
@@ -159,30 +186,19 @@ elif selected == "Register":
     with c1:
         st.write("**Products**")
         if "p_reg_input" not in st.session_state: st.session_state.p_reg_input = ""
+        p_val = st.text_input("Product Name", key="p_reg_input", placeholder="Type to search...")
         
-        # 1. Input Field
-        p_val = st.text_input("Product Name", key="p_reg_input", placeholder="Type to search or add new...")
-        
-        # 2. Live Dropdown Table
         matches_p = []
         if p_val:
             matches_p = [x for x in p_list if p_val.lower() in x.lower()]
             if matches_p and p_val.upper() not in p_list:
                 st.caption("👇 Click below to select:")
-                st.dataframe(
-                    pd.DataFrame(matches_p, columns=["Suggestions"]), 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    on_select="rerun", 
-                    selection_mode="single-row", 
-                    key="p_reg_selection"
-                )
+                st.dataframe(pd.DataFrame(matches_p, columns=["Suggestions"]), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="p_reg_selection")
                 handle_click("p_reg", matches_p)
 
-        # 3. Save Button
         if p_val:
             if p_val.upper() in p_list:
-                st.success(f"✅ '{p_val.upper()}' is already registered.")
+                st.success(f"✅ Registered")
             else:
                 if st.button(f"Save New: {p_val}"):
                     conn.table("products").insert({"name": p_val.strip().upper()}).execute()
@@ -194,27 +210,19 @@ elif selected == "Register":
     with c2:
         st.write("**Distributors**")
         if "d_reg_input" not in st.session_state: st.session_state.d_reg_input = ""
-        
-        d_val = st.text_input("Distributor Name", key="d_reg_input", placeholder="Type to search or add new...")
+        d_val = st.text_input("Distributor Name", key="d_reg_input", placeholder="Type to search...")
         
         matches_d = []
         if d_val:
             matches_d = [x for x in d_list if d_val.lower() in x.lower()]
             if matches_d and d_val.upper() not in d_list:
                 st.caption("👇 Click below to select:")
-                st.dataframe(
-                    pd.DataFrame(matches_d, columns=["Suggestions"]), 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    on_select="rerun", 
-                    selection_mode="single-row", 
-                    key="d_reg_selection"
-                )
+                st.dataframe(pd.DataFrame(matches_d, columns=["Suggestions"]), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="d_reg_selection")
                 handle_click("d_reg", matches_d)
 
         if d_val:
             if d_val.upper() in d_list:
-                st.success(f"✅ '{d_val.upper()}' is already registered.")
+                st.success(f"✅ Registered")
             else:
                 if st.button(f"Save New: {d_val}"):
                     conn.table("distributors").insert({"name": d_val.strip().upper()}).execute()
@@ -229,7 +237,7 @@ elif selected == "Register":
         with col_b: st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True)
 
 # ==========================================
-# PAGE: MANAGE (WITH DELETE COLUMN)
+# PAGE: MANAGE (Updated columns)
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
@@ -250,9 +258,9 @@ elif selected == "Manage":
             
         st.write(f"Showing **{len(filtered_df)}** records")
         
-        # Add Delete Column for Logic
         filtered_df["Delete"] = False
         
+        # Updated Editor with Qty and Comment
         edited_df = st.data_editor(
             filtered_df,
             key="manage_editor",
@@ -264,27 +272,24 @@ elif selected == "Manage":
                 "Delete": st.column_config.CheckboxColumn("🗑️ Delete", help="Check to delete", default=False),
                 "product": st.column_config.SelectboxColumn("Product", options=p_list, required=True),
                 "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list, required=True),
-                "tax_rate": st.column_config.SelectboxColumn("Tax", options=["5.5%", "20%", "No tax"])
+                "tax_rate": st.column_config.SelectboxColumn("Tax", options=["5.5%", "20%", "No tax"]),
+                "quantity": st.column_config.NumberColumn("Qty", min_value=1, step=1, required=True),
+                "comment": st.column_config.TextColumn("Comment")
             }
         )
         
         if st.button("Commit Changes"):
             state = st.session_state["manage_editor"]
             
-            # 1. Handle "Delete" Checkbox Deletions
             rows_to_delete = edited_df[edited_df["Delete"] == True]["id"].tolist()
-            
-            # 2. Handle Standard Keyboard Deletions
             for idx in state["deleted_rows"]:
                 if idx < len(filtered_df):
                     rows_to_delete.append(filtered_df.iloc[idx]["id"])
             
-            # Perform Deletions
             if rows_to_delete:
                 for rid in rows_to_delete:
                     conn.table("price_logs").delete().eq("id", rid).execute()
             
-            # 3. Handle Updates
             for idx, updates in state["edited_rows"].items():
                 if idx < len(filtered_df):
                     if "Delete" in updates: del updates["Delete"]
@@ -299,43 +304,94 @@ elif selected == "Manage":
     else: st.warning("No records found.")
 
 # ==========================================
-# PAGE: ANALYSER (GRAPH AT BOTTOM)
+# PAGE: ANALYSER (SPLIT INTO 2 SECTIONS)
 # ==========================================
 elif selected == "Analyser":
-    st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
-    target = st.selectbox("Select Product", [""] + p_list)
+    st.markdown("<h3 style='text-align: center;'>Analysis Center</h3>", unsafe_allow_html=True)
     
-    if target:
-        df = get_logs()
-        df_sub = df[df['product'] == target].copy()
+    # SPLIT INTO TABS
+    tab1, tab2 = st.tabs(["💰 Price Analysis", "📦 Stock Analysis"])
+    
+    # --- SUB SECTION 1: PRICE ANALYSIS ---
+    with tab1:
+        target_p = st.selectbox("Select Product (Price)", [""] + p_list, key="price_target")
         
-        if df_sub.empty:
-            st.warning(f"⚠️ '{target}' has not been entered yet. No data available.")
-        else:
-            min_price = df_sub['price'].min()
-            best_sellers = df_sub[df_sub['price'] == min_price]['distributor'].unique()
+        if target_p:
+            df = get_logs()
+            df_sub = df[df['product'] == target_p].copy()
             
-            # 1. BEST PRICE CARD
-            st.markdown(f"""
-            <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK}; margin-bottom: 20px;'>
-                <p style='margin:0; color:#888;'>BEST PRICE FOUND</p>
-                <h1 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h1>
-                <p>Available at: <strong>{", ".join(best_sellers)}</strong></p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # 2. HISTORY LOG (First)
-            st.subheader("History Log")
-            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
+            if df_sub.empty:
+                st.warning(f"⚠️ '{target_p}' has no data.")
+            else:
+                min_price = df_sub['price'].min()
+                best_sellers = df_sub[df_sub['price'] == min_price]['distributor'].unique()
+                
+                st.markdown(f"""
+                <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK}; margin-bottom: 20px;'>
+                    <p style='margin:0; color:#888;'>BEST PRICE FOUND</p>
+                    <h1 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h1>
+                    <p>Available at: <strong>{", ".join(best_sellers)}</strong></p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.subheader("History Log")
+                st.dataframe(df_sub[['date', 'distributor', 'price', 'quantity', 'comment']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
+                
+                st.write("---")
+                st.subheader("TOTAL SPEND (SUMMED)")
+                # Group by distributor -> Sum Price
+                df_chart = df_sub.groupby('distributor')['price'].sum().reset_index()
+                df_chart.columns = ['Distributor', 'Total Spend (€)']
+                st.bar_chart(df_chart, x="Distributor", y="Total Spend (€)", color="Distributor", use_container_width=True)
 
-            st.write("---")
-
-            # 3. TOTAL SPEND GRAPH (Last / Bottom)
-            st.subheader("TOTAL SPEND (SUMMED)")
-            df_chart = df_sub.groupby('distributor')['price'].sum().reset_index()
-            df_chart.columns = ['Distributor', 'Total Spend (€)']
+    # --- SUB SECTION 2: STOCK ANALYSIS ---
+    with tab2:
+        target_s = st.selectbox("Select Product (Stock)", [""] + p_list, key="stock_target")
+        
+        if target_s:
+            df = get_logs()
+            df_stock = df[df['product'] == target_s].copy()
             
-            st.bar_chart(df_chart, x="Distributor", y="Total Spend (€)", color="Distributor", use_container_width=True)
+            if df_stock.empty:
+                st.warning(f"⚠️ '{target_s}' has no stock data.")
+            else:
+                # 1. Calculate Stats
+                total_qty = df_stock['quantity'].sum()
+                
+                # Group by distributor to find who supplied the most
+                dist_qty = df_stock.groupby('distributor')['quantity'].sum().sort_values(ascending=False)
+                top_dist = dist_qty.index[0] if not dist_qty.empty else "N/A"
+                top_dist_qty = dist_qty.iloc[0] if not dist_qty.empty else 0
+                
+                # 2. UI CARD (Same Style)
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    st.markdown(f"""
+                    <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid #00d4ff; margin-bottom: 20px;'>
+                        <p style='margin:0; color:#888;'>TOTAL LOGGED QTY</p>
+                        <h1 style='margin:0; color:#00d4ff !important;'>{int(total_qty)} units</h1>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_s2:
+                    st.markdown(f"""
+                    <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid #00d4ff; margin-bottom: 20px;'>
+                        <p style='margin:0; color:#888;'>TOP SUPPLIER</p>
+                        <h3 style='margin:0; color:white !important;'>{top_dist}</h3>
+                        <p>Supplied: {int(top_dist_qty)} units</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # 3. History
+                st.subheader("Stock History")
+                st.dataframe(df_stock[['date', 'distributor', 'quantity', 'comment']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
+                
+                st.write("---")
+                
+                # 4. Graph: Distributor vs Total Qty
+                st.subheader("QUANTITY PER DISTRIBUTOR")
+                df_qty_chart = df_stock.groupby('distributor')['quantity'].sum().reset_index()
+                df_qty_chart.columns = ['Distributor', 'Total Quantity']
+                st.bar_chart(df_qty_chart, x="Distributor", y="Total Quantity", color="Distributor", use_container_width=True)
 
 # ==========================================
 # PAGE: EXPORT
