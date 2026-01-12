@@ -12,7 +12,7 @@ PINK = "#ff1774"
 DARK_BG = "#0e1117"
 CARD_BG = "#262730"
 
-st.set_page_config(page_title="Gmax Price Checker", page_icon=LOGO_URL, layout="wide")
+st.set_page_config(page_title="Gmax Price App", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
 # --- 2. CSS STYLING ---
@@ -67,8 +67,13 @@ def get_master_data():
 def get_logs():
     res = conn.table("price_logs").select("*").order("date", desc=True).execute()
     df = pd.DataFrame(res.data)
-    if not df.empty:
-        df['date'] = pd.to_datetime(df['date']).dt.date
+    
+    # --- BUG FIX: Handle empty database safely ---
+    if df.empty:
+        # Returns an empty table with the correct column headers to prevent crash
+        return pd.DataFrame(columns=['id', 'date', 'product', 'distributor', 'price', 'tax_rate', 'quantity', 'comment'])
+    
+    df['date'] = pd.to_datetime(df['date']).dt.date
     return df
 
 # LIVE STORAGE CHECK
@@ -83,11 +88,10 @@ def get_live_storage_mb():
 
 # --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
-    # UPDATED: Added Title Center
     st.markdown(f"""
         <div class="logo-container">
             <img src="{LOGO_URL}">
-            <h2 style='text-align: center; color: white; margin: 0;'>Gmax Price Checker</h2>
+            <h2 style='text-align: center; color: white; margin: 0;'>Gmax Price App</h2>
         </div>
     """, unsafe_allow_html=True)
     
@@ -105,7 +109,7 @@ if "role" not in st.session_state:
 with st.sidebar:
     st.image(LOGO_URL, width=140)
     selected = option_menu(
-        menu_title="Menu",  # UPDATED: Changed from 'Main Menu' to 'Menu'
+        menu_title="Menu", 
         options=["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"], 
         icons=["plus", "list", "pencil", "search", "download"], 
         default_index=0,
