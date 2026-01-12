@@ -12,7 +12,7 @@ PINK = "#ff1774"
 DARK_BG = "#0e1117"
 CARD_BG = "#262730"
 
-st.set_page_config(page_title="Gmax Management", page_icon=LOGO_URL, layout="wide")
+st.set_page_config(page_title="Gmax Price Checker", page_icon=LOGO_URL, layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
 # --- 2. CSS STYLING ---
@@ -50,8 +50,8 @@ st.markdown(f"""
         margin-right: auto;
     }}
     
-    .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
-    .logo-container img {{ width: 140px; }}
+    .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; flex-direction: column; align-items: center; }}
+    .logo-container img {{ width: 140px; margin-bottom: 10px; }}
     
     #MainMenu, footer {{visibility: hidden;}}
     </style>
@@ -83,7 +83,14 @@ def get_live_storage_mb():
 
 # --- 4. AUTHENTICATION ---
 if "role" not in st.session_state:
-    st.markdown(f'<div class="logo-container"><img src="{LOGO_URL}"></div>', unsafe_allow_html=True)
+    # UPDATED: Added Title Center
+    st.markdown(f"""
+        <div class="logo-container">
+            <img src="{LOGO_URL}">
+            <h2 style='text-align: center; color: white; margin: 0;'>Gmax Price Checker</h2>
+        </div>
+    """, unsafe_allow_html=True)
+    
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         pwd = st.text_input("Access Key", type="password")
@@ -98,7 +105,7 @@ if "role" not in st.session_state:
 with st.sidebar:
     st.image(LOGO_URL, width=140)
     selected = option_menu(
-        menu_title="Main Menu", 
+        menu_title="Menu",  # UPDATED: Changed from 'Main Menu' to 'Menu'
         options=["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"], 
         icons=["plus", "list", "pencil", "search", "download"], 
         default_index=0,
@@ -341,39 +348,33 @@ elif selected == "Analyser":
                 df_chart.columns = ['Distributor', 'Total Spend (€)']
                 st.bar_chart(df_chart, x="Distributor", y="Total Spend (€)", color="Distributor", use_container_width=True)
 
-    # --- SUB SECTION 2: STOCK ANALYSIS (WITH DATE FILTER) ---
+    # --- SUB SECTION 2: STOCK ANALYSIS ---
     with tab2:
         c_search, c_date = st.columns([2, 1])
         with c_search:
             target_s = st.selectbox("Select Product (Stock)", [""] + p_list, key="stock_target")
         with c_date:
-            # OPTIONAL DATE FILTER
             date_range = st.date_input("Date Range (Optional)", [])
 
         if target_s:
             df = get_logs()
-            # 1. First Filter by Product
             df_stock = df[df['product'] == target_s].copy()
             
-            # 2. Then Filter by Date (If user selected a range)
             if len(date_range) == 2:
                 start_date, end_date = date_range
-                # Ensure date column is datetime for comparison
                 df_stock['date'] = pd.to_datetime(df_stock['date']).dt.date
                 df_stock = df_stock[(df_stock['date'] >= start_date) & (df_stock['date'] <= end_date)]
             
             if df_stock.empty:
                 st.warning(f"⚠️ No stock data found for '{target_s}' in this period.")
             else:
-                # 3. Calculate Stats
+                # Stats
                 total_qty = df_stock['quantity'].sum()
-                
-                # Group by distributor to find who supplied the most
                 dist_qty = df_stock.groupby('distributor')['quantity'].sum().sort_values(ascending=False)
                 top_dist = dist_qty.index[0] if not dist_qty.empty else "N/A"
                 top_dist_qty = dist_qty.iloc[0] if not dist_qty.empty else 0
                 
-                # 4. UI CARD
+                # UI Cards
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
                     st.markdown(f"""
@@ -391,13 +392,13 @@ elif selected == "Analyser":
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # 5. History
+                # History
                 st.subheader("Stock History")
                 st.dataframe(df_stock[['date', 'distributor', 'quantity', 'comment']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
                 
                 st.write("---")
                 
-                # 6. Graph: Distributor vs Total Qty
+                # Graph
                 st.subheader("QUANTITY PER DISTRIBUTOR")
                 df_qty_chart = df_stock.groupby('distributor')['quantity'].sum().reset_index()
                 df_qty_chart.columns = ['Distributor', 'Total Quantity']
