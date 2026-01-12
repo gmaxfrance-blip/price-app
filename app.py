@@ -127,7 +127,7 @@ with st.sidebar:
 p_list, d_list = get_master_data()
 
 # ==========================================
-# PAGE: ENTRY (Added Qty & Comment)
+# PAGE: ENTRY
 # ==========================================
 if selected == "Entry":
     st.markdown("<h3 style='text-align: center;'>New Price Entry</h3>", unsafe_allow_html=True)
@@ -136,13 +136,11 @@ if selected == "Entry":
         with col_a:
             p = st.selectbox("Product", options=[""] + p_list)
             pr = st.number_input("Price HT (€)", min_value=0.0, step=0.01)
-            # NEW: Quantity Column 1
             qty = st.number_input("Quantity", min_value=1, step=1, value=1)
             
         with col_b:
             d = st.selectbox("Distributor", options=[""] + d_list)
             tx = st.selectbox("Tax %", ["5.5%", "20%", "No tax"])
-            # NEW: Comment Column 2
             cm = st.text_input("Comment (Optional)", placeholder="e.g. Broken box, promo...")
             
         dt = st.date_input("Date", date.today())
@@ -155,8 +153,8 @@ if selected == "Entry":
                     "price": pr, 
                     "tax_rate": tx, 
                     "date": str(dt),
-                    "quantity": qty,   # NEW
-                    "comment": cm      # NEW
+                    "quantity": qty,
+                    "comment": cm
                 }).execute()
                 st.success("Saved Successfully")
                 st.cache_data.clear()
@@ -170,7 +168,7 @@ if selected == "Entry":
         st.dataframe(df_history, use_container_width=True, hide_index=True)
 
 # ==========================================
-# PAGE: REGISTER (Unchanged)
+# PAGE: REGISTER
 # ==========================================
 elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
@@ -237,7 +235,7 @@ elif selected == "Register":
         with col_b: st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True)
 
 # ==========================================
-# PAGE: MANAGE (Updated columns)
+# PAGE: MANAGE
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
@@ -260,7 +258,6 @@ elif selected == "Manage":
         
         filtered_df["Delete"] = False
         
-        # Updated Editor with Qty and Comment
         edited_df = st.data_editor(
             filtered_df,
             key="manage_editor",
@@ -304,7 +301,7 @@ elif selected == "Manage":
     else: st.warning("No records found.")
 
 # ==========================================
-# PAGE: ANALYSER (SPLIT INTO 2 SECTIONS)
+# PAGE: ANALYSER
 # ==========================================
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Analysis Center</h3>", unsafe_allow_html=True)
@@ -344,18 +341,31 @@ elif selected == "Analyser":
                 df_chart.columns = ['Distributor', 'Total Spend (€)']
                 st.bar_chart(df_chart, x="Distributor", y="Total Spend (€)", color="Distributor", use_container_width=True)
 
-    # --- SUB SECTION 2: STOCK ANALYSIS ---
+    # --- SUB SECTION 2: STOCK ANALYSIS (WITH DATE FILTER) ---
     with tab2:
-        target_s = st.selectbox("Select Product (Stock)", [""] + p_list, key="stock_target")
-        
+        c_search, c_date = st.columns([2, 1])
+        with c_search:
+            target_s = st.selectbox("Select Product (Stock)", [""] + p_list, key="stock_target")
+        with c_date:
+            # OPTIONAL DATE FILTER
+            date_range = st.date_input("Date Range (Optional)", [])
+
         if target_s:
             df = get_logs()
+            # 1. First Filter by Product
             df_stock = df[df['product'] == target_s].copy()
             
+            # 2. Then Filter by Date (If user selected a range)
+            if len(date_range) == 2:
+                start_date, end_date = date_range
+                # Ensure date column is datetime for comparison
+                df_stock['date'] = pd.to_datetime(df_stock['date']).dt.date
+                df_stock = df_stock[(df_stock['date'] >= start_date) & (df_stock['date'] <= end_date)]
+            
             if df_stock.empty:
-                st.warning(f"⚠️ '{target_s}' has no stock data.")
+                st.warning(f"⚠️ No stock data found for '{target_s}' in this period.")
             else:
-                # 1. Calculate Stats
+                # 3. Calculate Stats
                 total_qty = df_stock['quantity'].sum()
                 
                 # Group by distributor to find who supplied the most
@@ -363,12 +373,12 @@ elif selected == "Analyser":
                 top_dist = dist_qty.index[0] if not dist_qty.empty else "N/A"
                 top_dist_qty = dist_qty.iloc[0] if not dist_qty.empty else 0
                 
-                # 2. UI CARD (Same Style)
+                # 4. UI CARD
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
                     st.markdown(f"""
                     <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid #00d4ff; margin-bottom: 20px;'>
-                        <p style='margin:0; color:#888;'>TOTAL LOGGED QTY</p>
+                        <p style='margin:0; color:#888;'>TOTAL QTY (Logged)</p>
                         <h1 style='margin:0; color:#00d4ff !important;'>{int(total_qty)} units</h1>
                     </div>
                     """, unsafe_allow_html=True)
@@ -381,13 +391,13 @@ elif selected == "Analyser":
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # 3. History
+                # 5. History
                 st.subheader("Stock History")
                 st.dataframe(df_stock[['date', 'distributor', 'quantity', 'comment']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
                 
                 st.write("---")
                 
-                # 4. Graph: Distributor vs Total Qty
+                # 6. Graph: Distributor vs Total Qty
                 st.subheader("QUANTITY PER DISTRIBUTOR")
                 df_qty_chart = df_stock.groupby('distributor')['quantity'].sum().reset_index()
                 df_qty_chart.columns = ['Distributor', 'Total Quantity']
