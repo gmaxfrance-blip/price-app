@@ -86,7 +86,7 @@ if "role" not in st.session_state:
 
 # --- 5. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    st.image(LOGO_URL, width=140) # Width ensures it respects the center CSS
+    st.image(LOGO_URL, width=140)
     selected = option_menu(
         menu_title="Main Menu", 
         options=["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"], 
@@ -272,7 +272,6 @@ elif selected == "Manage":
             state = st.session_state["manage_editor"]
             
             # 1. Handle "Delete" Checkbox Deletions
-            # We check the EDITED dataframe for rows where Delete is True
             rows_to_delete = edited_df[edited_df["Delete"] == True]["id"].tolist()
             
             # 2. Handle Standard Keyboard Deletions
@@ -288,7 +287,6 @@ elif selected == "Manage":
             # 3. Handle Updates
             for idx, updates in state["edited_rows"].items():
                 if idx < len(filtered_df):
-                    # Don't send the "Delete" column to Supabase
                     if "Delete" in updates: del updates["Delete"]
                     row_id = filtered_df.iloc[idx]["id"]
                     conn.table("price_logs").update(updates).eq("id", row_id).execute()
@@ -301,7 +299,7 @@ elif selected == "Manage":
     else: st.warning("No records found.")
 
 # ==========================================
-# PAGE: ANALYSER (UPDATED)
+# PAGE: ANALYSER (UPDATED WITH SUM GRAPH)
 # ==========================================
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
@@ -319,16 +317,20 @@ elif selected == "Analyser":
             
             st.markdown(f"""
             <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK}; margin-bottom: 20px;'>
-                <p style='margin:0; color:#888;'>BEST PRICE</p>
+                <p style='margin:0; color:#888;'>BEST PRICE FOUND</p>
                 <h1 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h1>
                 <p>Available at: <strong>{", ".join(best_sellers)}</strong></p>
             </div>
             """, unsafe_allow_html=True)
             
-            # --- NEW GRAPH: Distributor vs Price ---
-            st.subheader("Price Comparison")
-            # We use a simple bar chart to show prices across distributors
-            st.bar_chart(df_sub, x="distributor", y="price", color="distributor", use_container_width=True)
+            # --- GRAPH: TOTAL SPEND (SUM) per Distributor ---
+            # Logic: Group by distributor -> SUM the prices -> Show Chart
+            df_chart = df_sub.groupby('distributor')['price'].sum().reset_index()
+            df_chart.columns = ['Distributor', 'Total Spend (€)']
+            
+            st.subheader("Total Spend per Distributor")
+            st.caption("This chart adds up all prices to show total money spent/logged at each place.")
+            st.bar_chart(df_chart, x="Distributor", y="Total Spend (€)", color="Distributor", use_container_width=True)
             
             st.write("---")
             st.subheader("History Log")
