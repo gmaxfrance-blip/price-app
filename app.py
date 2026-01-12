@@ -4,6 +4,7 @@ from streamlit_option_menu import option_menu
 import pandas as pd
 from datetime import date, timedelta
 import io 
+import time
 
 # --- 1. CONFIGURATION ---
 LOGO_URL = "https://raw.githubusercontent.com/gmaxfrance-blip/price-app/a423573672203bc38f5fbcf5f5a56ac18380ebb3/dp%20logo.png"
@@ -29,6 +30,13 @@ st.markdown(f"""
     
     div.stButton > button {{ 
         background-color: {PINK} !important; color: white !important; border-radius: 4px; width: 100%; font-weight: bold; border: none;
+    }}
+    
+    /* CENTER SIDEBAR LOGO */
+    [data-testid="stSidebar"] img {{
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
     }}
     
     .logo-container {{ display: flex; justify-content: center; padding: 20px 10px; }}
@@ -78,7 +86,7 @@ if "role" not in st.session_state:
 
 # --- 5. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    st.image(LOGO_URL, width=100)
+    st.image(LOGO_URL, width=140) # Width ensures it respects the center CSS
     selected = option_menu(
         menu_title="Main Menu", 
         options=["Entry", "Register", "Manage", "Analyser", "Export"] if st.session_state.role == "admin" else ["Analyser", "Export"], 
@@ -141,7 +149,6 @@ elif selected == "Register":
     st.markdown("<h3 style='text-align: center;'>Register Management</h3>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     
-    # Selection Handler
     def handle_click(key_prefix, matches):
         sel = st.session_state.get(f"{key_prefix}_selection")
         if sel and sel["selection"]["rows"]:
@@ -160,7 +167,6 @@ elif selected == "Register":
         matches_p = []
         if p_val:
             matches_p = [x for x in p_list if p_val.lower() in x.lower()]
-            # Show table if matches exist AND it's not a perfect match yet
             if matches_p and p_val.upper() not in p_list:
                 st.caption("👇 Click below to select:")
                 st.dataframe(
@@ -173,7 +179,7 @@ elif selected == "Register":
                 )
                 handle_click("p_reg", matches_p)
 
-        # 3. Save Button (For New Items)
+        # 3. Save Button
         if p_val:
             if p_val.upper() in p_list:
                 st.success(f"✅ '{p_val.upper()}' is already registered.")
@@ -216,15 +222,14 @@ elif selected == "Register":
                     st.cache_data.clear()
                     st.rerun()
 
-    # Full List at Bottom
     st.write("---")
     with st.expander("View Full Registered Lists"):
-        ca, cb = st.columns(2)
-        with ca: st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True)
-        with cb: st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True)
+        col_a, col_b = st.columns(2)
+        with col_a: st.dataframe(pd.DataFrame(p_list, columns=["All Products"]), use_container_width=True)
+        with col_b: st.dataframe(pd.DataFrame(d_list, columns=["All Distributors"]), use_container_width=True)
 
 # ==========================================
-# PAGE: MANAGE
+# PAGE: MANAGE (WITH DELETE COLUMN)
 # ==========================================
 elif selected == "Manage":
     st.markdown("<h3 style='text-align: center;'>Database Management</h3>", unsafe_allow_html=True)
@@ -245,6 +250,9 @@ elif selected == "Manage":
             
         st.write(f"Showing **{len(filtered_df)}** records")
         
+        # Add Delete Column for Logic
+        filtered_df["Delete"] = False
+        
         edited_df = st.data_editor(
             filtered_df,
             key="manage_editor",
@@ -253,6 +261,7 @@ elif selected == "Manage":
             hide_index=True,
             column_config={
                 "id": None,
+                "Delete": st.column_config.CheckboxColumn("🗑️ Delete", help="Check to delete", default=False),
                 "product": st.column_config.SelectboxColumn("Product", options=p_list, required=True),
                 "distributor": st.column_config.SelectboxColumn("Distributor", options=d_list, required=True),
                 "tax_rate": st.column_config.SelectboxColumn("Tax", options=["5.5%", "20%", "No tax"])
@@ -261,22 +270,38 @@ elif selected == "Manage":
         
         if st.button("Commit Changes"):
             state = st.session_state["manage_editor"]
-            # Map edits back to original IDs
-            for idx, updates in state["edited_rows"].items():
-                if idx < len(filtered_df):
-                    row_id = filtered_df.iloc[idx]["id"]
-                    conn.table("price_logs").update(updates).eq("id", row_id).execute()
+            
+            # 1. Handle "Delete" Checkbox Deletions
+            # We check the EDITED dataframe for rows where Delete is True
+            rows_to_delete = edited_df[edited_df["Delete"] == True]["id"].tolist()
+            
+            # 2. Handle Standard Keyboard Deletions
             for idx in state["deleted_rows"]:
                 if idx < len(filtered_df):
+                    rows_to_delete.append(filtered_df.iloc[idx]["id"])
+            
+            # Perform Deletions
+            if rows_to_delete:
+                for rid in rows_to_delete:
+                    conn.table("price_logs").delete().eq("id", rid).execute()
+            
+            # 3. Handle Updates
+            for idx, updates in state["edited_rows"].items():
+                if idx < len(filtered_df):
+                    # Don't send the "Delete" column to Supabase
+                    if "Delete" in updates: del updates["Delete"]
                     row_id = filtered_df.iloc[idx]["id"]
-                    conn.table("price_logs").delete().eq("id", row_id).execute()
-            st.success("Updated")
+                    conn.table("price_logs").update(updates).eq("id", row_id).execute()
+            
+            st.success("Database Updated Successfully!")
             st.cache_data.clear()
+            time.sleep(1)
             st.rerun()
+            
     else: st.warning("No records found.")
 
 # ==========================================
-# PAGE: ANALYSER
+# PAGE: ANALYSER (UPDATED)
 # ==========================================
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
@@ -285,18 +310,28 @@ elif selected == "Analyser":
     if target:
         df = get_logs()
         df_sub = df[df['product'] == target].copy()
-        if not df_sub.empty:
+        
+        if df_sub.empty:
+            st.warning(f"⚠️ '{target}' has not been entered yet. No data available.")
+        else:
             min_price = df_sub['price'].min()
             best_sellers = df_sub[df_sub['price'] == min_price]['distributor'].unique()
             
             st.markdown(f"""
-            <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK};'>
+            <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK}; margin-bottom: 20px;'>
                 <p style='margin:0; color:#888;'>BEST PRICE</p>
                 <h1 style='margin:0; color:{PINK} !important;'>{min_price:.2f} €</h1>
                 <p>Available at: <strong>{", ".join(best_sellers)}</strong></p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # --- NEW GRAPH: Distributor vs Price ---
+            st.subheader("Price Comparison")
+            # We use a simple bar chart to show prices across distributors
+            st.bar_chart(df_sub, x="distributor", y="price", color="distributor", use_container_width=True)
+            
             st.write("---")
+            st.subheader("History Log")
             st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
 
 # ==========================================
