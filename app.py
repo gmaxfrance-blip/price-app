@@ -299,7 +299,7 @@ elif selected == "Manage":
     else: st.warning("No records found.")
 
 # ==========================================
-# PAGE: ANALYSER (UPDATED WITH SUM GRAPH)
+# PAGE: ANALYSER (GRAPH AT BOTTOM)
 # ==========================================
 elif selected == "Analyser":
     st.markdown("<h3 style='text-align: center;'>Price Analysis</h3>", unsafe_allow_html=True)
@@ -315,6 +315,7 @@ elif selected == "Analyser":
             min_price = df_sub['price'].min()
             best_sellers = df_sub[df_sub['price'] == min_price]['distributor'].unique()
             
+            # 1. BEST PRICE CARD
             st.markdown(f"""
             <div style='background-color:{CARD_BG}; padding:20px; border-radius:10px; border-left: 6px solid {PINK}; margin-bottom: 20px;'>
                 <p style='margin:0; color:#888;'>BEST PRICE FOUND</p>
@@ -323,18 +324,18 @@ elif selected == "Analyser":
             </div>
             """, unsafe_allow_html=True)
             
-            # --- GRAPH: TOTAL SPEND (SUM) per Distributor ---
-            # Logic: Group by distributor -> SUM the prices -> Show Chart
+            # 2. HISTORY LOG (First)
+            st.subheader("History Log")
+            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
+
+            st.write("---")
+
+            # 3. TOTAL SPEND GRAPH (Last / Bottom)
+            st.subheader("TOTAL SPEND (SUMMED)")
             df_chart = df_sub.groupby('distributor')['price'].sum().reset_index()
             df_chart.columns = ['Distributor', 'Total Spend (€)']
             
-            st.subheader("Total Spend per Distributor")
-            st.caption("This chart adds up all prices to show total money spent/logged at each place.")
             st.bar_chart(df_chart, x="Distributor", y="Total Spend (€)", color="Distributor", use_container_width=True)
-            
-            st.write("---")
-            st.subheader("History Log")
-            st.dataframe(df_sub[['date', 'distributor', 'price', 'tax_rate']].sort_values('date', ascending=False), use_container_width=True, hide_index=True)
 
 # ==========================================
 # PAGE: EXPORT
